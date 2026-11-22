@@ -12,4 +12,5 @@ using Test
     include("test_b5b_replace.jl")
     include("test_b5c_factor.jl")
     include("test_b6_mps_io.jl")
+    include("test_b7a_presolve_basic.jl")
 end

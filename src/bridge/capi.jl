@@ -620,3 +620,264 @@ Base.@ccallable function jclp_mps_convert_double(
     coin_convert_double!(Int32(section), Int32(format_type), value, out)
     return nothing
 end
+
+# --- B7a: CoinPresolve Core Helpers + Zeros + Empty + Isolated + Useless + Fixed ---
+
+Base.@ccallable function jclp_ps_pod_sizeof()::Cint
+    return Cint(sizeof(CoinPresolvePodView))
+end
+
+Base.@ccallable function jclp_post_pod_sizeof()::Cint
+    return Cint(sizeof(CoinPostsolvePodView))
+end
+
+Base.@ccallable function jclp_ps_make_memlists(
+    lengths::Ptr{Cint},
+    lnk::Ptr{PresolveHLinkPod},
+    n::Cint,
+)::Cvoid
+    ps_make_memlists!(lengths, lnk, Int32(n))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_expand_major(
+    majstrts::Ptr{Cint},
+    els::Ptr{Cdouble},
+    minndxs::Ptr{Cint},
+    majlens::Ptr{Cint},
+    majlinks::Ptr{PresolveHLinkPod},
+    nmaj::Cint,
+    k::Cint,
+)::Cint
+    return ps_expand_major!(majstrts, els, minndxs, majlens, majlinks, Int32(nmaj), Int32(k)) ? Cint(1) : Cint(0)
+end
+
+Base.@ccallable function jclp_ps_delete_from_major2(
+    majndx::Cint,
+    minndx::Cint,
+    majstrts::Ptr{Cint},
+    majlens::Ptr{Cint},
+    minndxs::Ptr{Cint},
+    majlinks::Ptr{Cint},
+    free_list_ptr::Ptr{Cint},
+)::Cvoid
+    ps_delete_from_major2!(Int32(majndx), Int32(minndx), majstrts, majlens, minndxs, majlinks, free_list_ptr)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_recompute_sums(
+    p_ptr::Ptr{CoinPresolvePodView},
+    one_row::Cint,
+)::Cint
+    return Cint(ps_recompute_sums!(p_ptr, Int32(one_row)))
+end
+
+Base.@ccallable function jclp_ps_init_cols_todo(p_ptr::Ptr{CoinPresolvePodView})::Cvoid
+    ps_init_cols_todo!(p_ptr)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_init_rows_todo(p_ptr::Ptr{CoinPresolvePodView})::Cvoid
+    ps_init_rows_todo!(p_ptr)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_step_cols_todo(p_ptr::Ptr{CoinPresolvePodView})::Cint
+    return Cint(ps_step_cols_todo!(p_ptr))
+end
+
+Base.@ccallable function jclp_ps_step_rows_todo(p_ptr::Ptr{CoinPresolvePodView})::Cint
+    return Cint(ps_step_rows_todo!(p_ptr))
+end
+
+Base.@ccallable function jclp_ps_zeros_count(
+    p_ptr::Ptr{CoinPresolvePodView},
+    checkcols::Ptr{Cint},
+    ncheck_ptr::Ptr{Cint},
+)::Cint
+    return Cint(ps_zeros_count!(p_ptr, checkcols, ncheck_ptr))
+end
+
+Base.@ccallable function jclp_ps_zeros_drop(
+    p_ptr::Ptr{CoinPresolvePodView},
+    checkcols::Ptr{Cint},
+    ncheckcols::Cint,
+    actions::Ptr{DroppedZeroPod},
+)::Cint
+    return Cint(ps_zeros_drop!(p_ptr, checkcols, Int32(ncheckcols), actions))
+end
+
+Base.@ccallable function jclp_ps_zeros_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    zeros::Ptr{DroppedZeroPod},
+    nzeros::Cint,
+)::Cvoid
+    ps_zeros_postsolve!(p_ptr, zeros, Int32(nzeros))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_drop_empty_cols_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    ecols::Ptr{Cint},
+    necols::Cint,
+    actions::Ptr{DropEmptyColActionPod},
+    colmapping::Ptr{Cint},
+    newclink::Ptr{PresolveHLinkPod},
+    out_bad_col::Ptr{Cint},
+)::Cint
+    return Cint(ps_drop_empty_cols_presolve!(
+        p_ptr, ecols, Int32(necols), actions, colmapping, newclink, out_bad_col,
+    ))
+end
+
+Base.@ccallable function jclp_ps_drop_empty_cols_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{DropEmptyColActionPod},
+    nactions::Cint,
+    colmapping::Ptr{Cint},
+)::Cvoid
+    ps_drop_empty_cols_postsolve!(p_ptr, actions, Int32(nactions), colmapping)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_drop_empty_rows_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions::Ptr{DropEmptyRowActionPod},
+    rowmapping::Ptr{Cint},
+    out_infeas_row::Ptr{Cint},
+)::Cint
+    return Cint(ps_drop_empty_rows_presolve!(p_ptr, actions, rowmapping, out_infeas_row))
+end
+
+Base.@ccallable function jclp_ps_drop_empty_rows_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{DropEmptyRowActionPod},
+    nactions::Cint,
+    rowmapping::Ptr{Cint},
+)::Cvoid
+    ps_drop_empty_rows_postsolve!(p_ptr, actions, Int32(nactions), rowmapping)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_isolated_check(
+    p_ptr::Ptr{CoinPresolvePodView},
+    irow::Cint,
+)::Cint
+    return Cint(ps_isolated_check(p_ptr, Int32(irow)))
+end
+
+Base.@ccallable function jclp_ps_isolated_apply(
+    p_ptr::Ptr{CoinPresolvePodView},
+    irow::Cint,
+    out_rowcols::Ptr{Cint},
+    out_rowels::Ptr{Cdouble},
+    out_costs::Ptr{Cdouble},
+)::Cvoid
+    ps_isolated_apply!(p_ptr, Int32(irow), out_rowcols, out_rowels, out_costs)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_isolated_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    irow::Cint,
+    ninrow::Cint,
+    rlo_val::Cdouble,
+    rup_val::Cdouble,
+    rowcols::Ptr{Cint},
+    rowels::Ptr{Cdouble},
+)::Cvoid
+    ps_isolated_postsolve!(p_ptr, Int32(irow), Int32(ninrow), rlo_val, rup_val, rowcols, rowels)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_test_redundant_core(
+    p_ptr::Ptr{CoinPresolvePodView},
+    col_lower::Ptr{Cdouble},
+    col_upper::Ptr{Cdouble},
+    out_nuseless::Ptr{Cint},
+    out_nfixed::Ptr{Cint},
+    out_infeas_row::Ptr{Cint},
+)::Cint
+    return Cint(ps_test_redundant_core!(p_ptr, col_lower, col_upper, out_nuseless, out_nfixed, out_infeas_row))
+end
+
+Base.@ccallable function jclp_ps_useless_remove_rows(
+    p_ptr::Ptr{CoinPresolvePodView},
+    useless_rows::Ptr{Cint},
+    nuseless::Cint,
+)::Cvoid
+    ps_useless_remove_rows!(p_ptr, useless_rows, Int32(nuseless))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_useless_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{UselessActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_useless_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_remove_fixed_filter(
+    p_ptr::Ptr{CoinPresolvePodView},
+    fcols::Ptr{Cint},
+    nfcols_ptr::Ptr{Cint},
+)::Cint
+    return Cint(ps_remove_fixed_filter!(p_ptr, fcols, nfcols_ptr))
+end
+
+Base.@ccallable function jclp_ps_remove_fixed_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    fcols::Ptr{Cint},
+    nfcols::Cint,
+    actions::Ptr{RemoveFixedActionPod},
+    els_action::Ptr{Cdouble},
+    rows_action::Ptr{Cint},
+    rstrt::Ptr{Cint},
+    column_buf::Ptr{Cint},
+    mark_buf::Ptr{UInt8},
+)::Cint
+    return Cint(ps_remove_fixed_presolve!(
+        p_ptr, fcols, Int32(nfcols), actions, els_action, rows_action, rstrt, column_buf, mark_buf,
+    ))
+end
+
+Base.@ccallable function jclp_ps_remove_fixed_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{RemoveFixedActionPod},
+    nactions::Cint,
+    els_action::Ptr{Cdouble},
+    rows_action::Ptr{Cint},
+)::Cvoid
+    ps_remove_fixed_postsolve!(p_ptr, actions, Int32(nactions), els_action, rows_action)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_make_fixed_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    fcols::Ptr{Cint},
+    nfcols::Cint,
+    fix_to_lower::Cint,
+    actions::Ptr{MakeFixedActionPod},
+)::Cvoid
+    ps_make_fixed_presolve!(p_ptr, fcols, Int32(nfcols), fix_to_lower != Cint(0), actions)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_make_fixed_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{MakeFixedActionPod},
+    nactions::Cint,
+    fix_to_lower::Cint,
+)::Cvoid
+    ps_make_fixed_postsolve!(p_ptr, actions, Int32(nactions), fix_to_lower != Cint(0))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_transfer_costs(
+    p_ptr::Ptr{CoinPresolvePodView},
+)::Cvoid
+    ps_transfer_costs!(p_ptr)
+    return nothing
+end
