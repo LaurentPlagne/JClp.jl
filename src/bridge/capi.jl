@@ -5710,3 +5710,296 @@ Base.@ccallable function jclp_check_solution_internal(
     unsafe_store!(out_prob_status, Cint(pstat))
     return nothing
 end
+
+# ==============================================================================
+# Phase B — B11c-2: createRim1, createRim4, computePrimals/computeDuals kernels
+# ==============================================================================
+
+Base.@ccallable function jclp_create_rim1(
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    row_lo::Ptr{Cdouble},
+    row_hi::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    nrows::Cint,
+    nrows_extra::Cint,
+    ncols::Cint,
+    max_rows::Cint,
+    max_cols::Cint,
+    special_options::Cint,
+    initial::Cint,
+    rhs_scale::Cdouble,
+    primal_tol::Cdouble,
+)::Cvoid
+    nr = Int(nrows)
+    nre = Int(nrows_extra)
+    nc = Int(ncols)
+    mr = Int(max_rows)
+    mc = Int(max_cols)
+    so = Int(special_options)
+    nt = (so & 65536) != 0 ? (mc + mr + nr + nre + nc) : (nr + nre + nc)
+    lo_v = PtrView(lower, nt)
+    hi_v = PtrView(upper, nt)
+    clo = PtrView(col_lo, nc)
+    chi = PtrView(col_hi, nc)
+    rlo = PtrView(row_lo, nr)
+    rhi = PtrView(row_hi, nr)
+    init = initial != Cint(0)
+    rs = Float64(rhs_scale)
+    pt = Float64(primal_tol)
+    if row_scale == C_NULL
+        clp_create_rim1!(lo_v, hi_v, clo, chi, rlo, rhi, nothing, nothing, nr, nre, nc, mr, mc, so, init, rs, pt)
+    elseif inv_col_scale == C_NULL
+        clp_create_rim1!(lo_v, hi_v, clo, chi, rlo, rhi, PtrView(row_scale, nr), nothing, nr, nre, nc, mr, mc, so, init, rs, pt)
+    else
+        clp_create_rim1!(lo_v, hi_v, clo, chi, rlo, rhi, PtrView(row_scale, nr), PtrView(inv_col_scale, nc), nr, nre, nc, mr, mc, so, init, rs, pt)
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_create_rim4(
+    cost::Ptr{Cdouble},
+    obj::Ptr{Cdouble},
+    row_obj::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    nrows::Cint,
+    nrows_extra::Cint,
+    ncols::Cint,
+    max_rows::Cint,
+    max_cols::Cint,
+    special_options::Cint,
+    initial::Cint,
+    direction::Cdouble,
+)::Cvoid
+    nr = Int(nrows)
+    nre = Int(nrows_extra)
+    nc = Int(ncols)
+    mr = Int(max_rows)
+    mc = Int(max_cols)
+    so = Int(special_options)
+    nt = (so & 65536) != 0 ? (mc + mr + nr + nre + nc) : (nr + nre + nc)
+    c_v = PtrView(cost, nt)
+    o_v = PtrView(obj, nc)
+    init = initial != Cint(0)
+    dir = Float64(direction)
+    if row_scale == C_NULL
+        if row_obj == C_NULL
+            clp_create_rim4!(c_v, o_v, nothing, nothing, nothing, nr, nre, nc, mr, mc, so, init, dir)
+        else
+            clp_create_rim4!(c_v, o_v, PtrView(row_obj, nr), nothing, nothing, nr, nre, nc, mr, mc, so, init, dir)
+        end
+    else
+        rsv = PtrView(row_scale, nr)
+        if row_obj == C_NULL
+            if col_scale == C_NULL
+                clp_create_rim4!(c_v, o_v, nothing, rsv, nothing, nr, nre, nc, mr, mc, so, init, dir)
+            else
+                clp_create_rim4!(c_v, o_v, nothing, rsv, PtrView(col_scale, nc), nr, nre, nc, mr, mc, so, init, dir)
+            end
+        else
+            rov = PtrView(row_obj, nr)
+            if col_scale == C_NULL
+                clp_create_rim4!(c_v, o_v, rov, rsv, nothing, nr, nre, nc, mr, mc, so, init, dir)
+            else
+                clp_create_rim4!(c_v, o_v, rov, rsv, PtrView(col_scale, nc), nr, nre, nc, mr, mc, so, init, dir)
+            end
+        end
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_zero_basic_solution(
+    solution::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    nrows::Cint,
+    ntotal::Cint,
+)::Cvoid
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    clp_zero_basic_solution!(PtrView(solution, nt), ShiftedPtrView(pivot_var, nr), nr)
+    return nothing
+end
+
+Base.@ccallable function jclp_pack_sum_nonzero(
+    dst_val::Ptr{Cdouble},
+    dst_idx::Ptr{Cint},
+    a::Ptr{Cdouble},
+    b::Ptr{Cdouble},
+    nrows::Cint,
+)::Cint
+    nr = Int(nrows)
+    return Cint(clp_pack_sum_nonzero!(
+        PtrView(dst_val, nr),
+        ShiftedPtrView(dst_idx, nr),
+        PtrView(a, nr),
+        PtrView(b, nr),
+        nr,
+    ))
+end
+
+Base.@ccallable function jclp_scatter_basic_solution(
+    solution::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    src_val::Ptr{Cdouble},
+    src_idx::Ptr{Cint},
+    src_nnz::Cint,
+    nrows::Cint,
+    ntotal::Cint,
+    dense_scatter::Cint,
+)::Cvoid
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    clp_scatter_basic_solution!(
+        PtrView(solution, nt),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(src_val, nr),
+        ShiftedPtrView(src_idx, nr),
+        Int(src_nnz),
+        nr,
+        dense_scatter != Cint(0),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_primal_residual_scale(
+    work::Ptr{Cdouble},
+    row_act::Ptr{Cdouble},
+    nrows::Cint,
+    multiplier::Cdouble,
+)::Cdouble
+    nr = Int(nrows)
+    return clp_primal_residual_scale!(PtrView(work, nr), PtrView(row_act, nr), nr, Float64(multiplier))
+end
+
+Base.@ccallable function jclp_refine_prepare(
+    dst_val::Ptr{Cdouble},
+    dst_idx::Ptr{Cint},
+    work::Ptr{Cdouble},
+    nrows::Cint,
+    multiplier::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    return Cint(clp_refine_prepare!(
+        PtrView(dst_val, nr),
+        ShiftedPtrView(dst_idx, nr),
+        PtrView(work, nr),
+        nr,
+        Float64(multiplier),
+    ))
+end
+
+Base.@ccallable function jclp_refine_combine(
+    arr_val::Ptr{Cdouble},
+    arr_idx::Ptr{Cint},
+    prev_val::Ptr{Cdouble},
+    nrows::Cint,
+    inv_multiplier::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    return Cint(clp_refine_combine!(
+        PtrView(arr_val, nr),
+        ShiftedPtrView(arr_idx, nr),
+        PtrView(prev_val, nr),
+        nr,
+        Float64(inv_multiplier),
+    ))
+end
+
+Base.@ccallable function jclp_compute_duals_setup(
+    arr_val::Ptr{Cdouble},
+    arr_idx::Ptr{Cint},
+    cost::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    given_djs::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ntotal::Cint,
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    av = PtrView(arr_val, nr)
+    ai = ShiftedPtrView(arr_idx, nr)
+    cv = PtrView(cost, nt)
+    pv = ShiftedPtrView(pivot_var, nr)
+    sv = PtrView(status, nt)
+    if given_djs == C_NULL
+        return Cint(clp_compute_duals_setup!(av, ai, cv, pv, nothing, sv, nr))
+    else
+        return Cint(clp_compute_duals_setup!(av, ai, cv, pv, PtrView(given_djs, nt), sv, nr))
+    end
+end
+
+Base.@ccallable function jclp_compute_duals_collect_structurals(
+    idx_out::Ptr{Cint},
+    pivot_var::Ptr{Cint},
+    nrows::Cint,
+    ncols::Cint,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    return Cint(clp_compute_duals_collect_structurals!(
+        ShiftedPtrView(idx_out, nr),
+        ShiftedPtrView(pivot_var, nr),
+        nr,
+        nc,
+    ))
+end
+
+Base.@ccallable function jclp_compute_duals_residual(
+    work::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    arr_val::Ptr{Cdouble},
+    row_obj::Ptr{Cdouble},
+    col_obj::Ptr{Cdouble},
+    work2::Ptr{Cdouble},
+    given_djs::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+)::Cdouble
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    wv = PtrView(work, nr)
+    pv = ShiftedPtrView(pivot_var, nr)
+    av = PtrView(arr_val, nr)
+    rov = PtrView(row_obj, nr)
+    cov = PtrView(col_obj, nc)
+    w2v = PtrView(work2, nr)
+    if given_djs == C_NULL
+        return clp_compute_duals_residual!(wv, pv, av, rov, cov, w2v, nothing, nr, nc)
+    else
+        return clp_compute_duals_residual!(wv, pv, av, rov, cov, w2v, PtrView(given_djs, nt), nr, nc)
+    end
+end
+
+Base.@ccallable function jclp_compute_duals_finalize_prep(
+    dual::Ptr{Cdouble},
+    row_dj::Ptr{Cdouble},
+    col_dj::Ptr{Cdouble},
+    which_col::Ptr{Cint},
+    arr_val::Ptr{Cdouble},
+    row_obj::Ptr{Cdouble},
+    col_obj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ncols::Cint,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    dv = PtrView(dual, nr)
+    rdv = PtrView(row_dj, nr)
+    cdv = PtrView(col_dj, nc)
+    av = PtrView(arr_val, nr)
+    rov = PtrView(row_obj, nr)
+    cov = PtrView(col_obj, nc)
+    sv = PtrView(status, nr + nc)
+    if which_col == C_NULL
+        return Cint(clp_compute_duals_finalize_prep!(dv, rdv, cdv, nothing, av, rov, cov, sv, nr, nc))
+    else
+        return Cint(clp_compute_duals_finalize_prep!(dv, rdv, cdv, ShiftedPtrView(which_col, nc), av, rov, cov, sv, nr, nc))
+    end
+end

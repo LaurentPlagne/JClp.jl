@@ -25,4 +25,5 @@ using Test
     include("test_b11a_simplex_dual.jl")
     include("test_b11b_simplex_primal.jl")
     include("test_b11c1_simplex_base.jl")
+    include("test_b11c2_simplex_base.jl")
 end

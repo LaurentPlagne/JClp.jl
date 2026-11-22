@@ -701,3 +701,477 @@ function clp_check_solution_internal!(
     prob_status = (num_d_inf == 0 && num_p_inf == 0) ? 0 : -1
     return (obj_val, sum_p_inf, num_p_inf, sum_d_inf, num_d_inf, prob_status)
 end
+
+# ==============================================================================
+# Phase B — B11c-2: createRim1, createRim4, computePrimals/computeDuals kernels
+# ==============================================================================
+
+const CLP_STATUS_PIVOTED_BIT = UInt8(32)
+@inline _sb_pivoted(st::UInt8) = (st & CLP_STATUS_PIVOTED_BIT) != UInt8(0)
+
+@inline function _sb_scale_bound_pair(
+    lo::Float64,
+    hi::Float64,
+    mult::Float64,
+    primal_tol::Float64,
+    dbl_max::Float64,
+)::Tuple{Float64,Float64}
+    if lo > -1.0e20
+        lo_w = lo * mult
+        if hi >= 1.0e20
+            hi_w = dbl_max
+        else
+            hi_w = hi * mult
+            if abs(hi_w - lo_w) <= primal_tol
+                if lo_w >= 0.0
+                    hi_w = lo_w
+                elseif hi_w <= 0.0
+                    lo_w = hi_w
+                else
+                    hi_w = 0.0
+                    lo_w = 0.0
+                end
+            end
+        end
+        return (lo_w, hi_w)
+    elseif hi < 1.0e20
+        return (-dbl_max, hi * mult)
+    else
+        return (-dbl_max, dbl_max)
+    end
+end
+
+@inline function _sb_unscaled_bound_pair(
+    lo::Float64,
+    hi::Float64,
+    primal_tol::Float64,
+    dbl_max::Float64,
+)::Tuple{Float64,Float64}
+    if lo > -1.0e20
+        lo_w = lo
+        if hi >= 1.0e20
+            hi_w = dbl_max
+        else
+            hi_w = hi
+            if abs(hi_w - lo_w) <= primal_tol
+                if lo_w >= 0.0
+                    hi_w = lo_w
+                elseif hi_w <= 0.0
+                    lo_w = hi_w
+                else
+                    hi_w = 0.0
+                    lo_w = 0.0
+                end
+            end
+        end
+        return (lo_w, hi_w)
+    elseif hi < 1.0e20
+        return (-dbl_max, hi)
+    else
+        return (-dbl_max, dbl_max)
+    end
+end
+
+"""
+    clp_create_rim1!(...)
+
+Matches `ClpSimplex::createRim1(bool initial)` (lines 4511–4721).
+"""
+function clp_create_rim1!(
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    col_lo::AbstractVector{Float64},
+    col_hi::AbstractVector{Float64},
+    row_lo::AbstractVector{Float64},
+    row_hi::AbstractVector{Float64},
+    row_scale::Union{AbstractVector{Float64},Nothing},
+    inv_col_scale::Union{AbstractVector{Float64},Nothing},
+    nrows::Int,
+    nrows_extra::Int,
+    ncols::Int,
+    max_rows::Int,
+    max_cols::Int,
+    special_options::Int,
+    initial::Bool,
+    rhs_scale::Float64,
+    primal_tol::Float64,
+)::Nothing
+    ntotal = nrows + nrows_extra + ncols
+    if (special_options & 65536) != 0
+        save = max_cols + max_rows
+        @inbounds for i in 1:ntotal
+            lower[i] = lower[save + i]
+            upper[i] = upper[save + i]
+        end
+        return nothing
+    end
+    dbl_max = floatmax(Float64)
+    if row_scale !== nothing
+        if !initial && inv_col_scale !== nothing
+            @inbounds for i in 1:ncols
+                mult = rhs_scale * inv_col_scale[i]
+                lo_w, hi_w = _sb_scale_bound_pair(col_lo[i], col_hi[i], mult, primal_tol, dbl_max)
+                lower[i] = lo_w
+                upper[i] = hi_w
+            end
+        end
+        @inbounds for i in 1:nrows
+            mult = rhs_scale * row_scale[i]
+            lo_w, hi_w = _sb_scale_bound_pair(row_lo[i], row_hi[i], mult, primal_tol, dbl_max)
+            lower[ncols + i] = lo_w
+            upper[ncols + i] = hi_w
+        end
+    elseif rhs_scale != 1.0
+        @inbounds for i in 1:ncols
+            lo_w, hi_w = _sb_scale_bound_pair(col_lo[i], col_hi[i], rhs_scale, primal_tol, dbl_max)
+            lower[i] = lo_w
+            upper[i] = hi_w
+        end
+        @inbounds for i in 1:nrows
+            lo_w, hi_w = _sb_scale_bound_pair(row_lo[i], row_hi[i], rhs_scale, primal_tol, dbl_max)
+            lower[ncols + i] = lo_w
+            upper[ncols + i] = hi_w
+        end
+    else
+        @inbounds for i in 1:ncols
+            lo_w, hi_w = _sb_unscaled_bound_pair(col_lo[i], col_hi[i], primal_tol, dbl_max)
+            lower[i] = lo_w
+            upper[i] = hi_w
+        end
+        @inbounds for i in 1:nrows
+            lo_w, hi_w = _sb_unscaled_bound_pair(row_lo[i], row_hi[i], primal_tol, dbl_max)
+            lower[ncols + i] = lo_w
+            upper[ncols + i] = hi_w
+        end
+    end
+    return nothing
+end
+
+"""
+    clp_create_rim4!(...)
+
+Matches `ClpSimplex::createRim4(bool initial)` (lines 4723–4765).
+"""
+function clp_create_rim4!(
+    cost::AbstractVector{Float64},
+    obj::AbstractVector{Float64},
+    row_obj::Union{AbstractVector{Float64},Nothing},
+    row_scale::Union{AbstractVector{Float64},Nothing},
+    col_scale::Union{AbstractVector{Float64},Nothing},
+    nrows::Int,
+    nrows_extra::Int,
+    ncols::Int,
+    max_rows::Int,
+    max_cols::Int,
+    special_options::Int,
+    initial::Bool,
+    direction::Float64,
+)::Nothing
+    ntotal = nrows + nrows_extra + ncols
+    if (special_options & 65536) != 0
+        save = max_cols + max_rows
+        @inbounds for i in 1:ntotal
+            cost[i] = cost[save + i]
+        end
+        return nothing
+    end
+    if row_scale !== nothing
+        if row_obj !== nothing
+            @inbounds for i in 1:nrows
+                cost[ncols + i] = row_obj[i] * direction / row_scale[i]
+            end
+        else
+            @inbounds for i in 1:nrows
+                cost[ncols + i] = 0.0
+            end
+        end
+        if !initial && col_scale !== nothing
+            @inbounds for i in 1:ncols
+                cost[i] = obj[i] * direction * col_scale[i]
+            end
+        end
+    else
+        if row_obj !== nothing
+            @inbounds for i in 1:nrows
+                cost[ncols + i] = row_obj[i] * direction
+            end
+        else
+            @inbounds for i in 1:nrows
+                cost[ncols + i] = 0.0
+            end
+        end
+        @inbounds for i in 1:ncols
+            cost[i] = obj[i] * direction
+        end
+    end
+    return nothing
+end
+
+# --- computePrimals sub-kernels ---
+
+function clp_zero_basic_solution!(
+    solution::AbstractVector{Float64},
+    pivot_var::AbstractVector{Int32},
+    nrows::Int,
+)::Nothing
+    @inbounds for i in 1:nrows
+        solution[Int(pivot_var[i])] = 0.0
+    end
+    return nothing
+end
+
+function clp_pack_sum_nonzero!(
+    dst_val::AbstractVector{Float64},
+    dst_idx::AbstractVector{Int32},
+    a::AbstractVector{Float64},
+    b::AbstractVector{Float64},
+    nrows::Int,
+)::Int
+    nnz = 0
+    @inbounds for i in 1:nrows
+        val = a[i] + b[i]
+        if val != 0.0
+            dst_val[i] = val
+            nnz += 1
+            dst_idx[nnz] = Int32(i)
+        else
+            dst_val[i] = 0.0
+        end
+    end
+    return nnz
+end
+
+function clp_scatter_basic_solution!(
+    solution::AbstractVector{Float64},
+    pivot_var::AbstractVector{Int32},
+    src_val::AbstractVector{Float64},
+    src_idx::AbstractVector{Int32},
+    src_nnz::Int,
+    nrows::Int,
+    dense_scatter::Bool,
+)::Nothing
+    if !dense_scatter
+        @inbounds for j in 1:src_nnz
+            irow = Int(src_idx[j])
+            solution[Int(pivot_var[irow])] = src_val[irow]
+        end
+    else
+        @inbounds for irow in 1:nrows
+            solution[Int(pivot_var[irow])] = src_val[irow]
+        end
+    end
+    return nothing
+end
+
+function clp_primal_residual_scale!(
+    work::AbstractVector{Float64},
+    row_act::AbstractVector{Float64},
+    nrows::Int,
+    multiplier::Float64,
+)::Float64
+    max_err = 0.0
+    @inbounds for i in 1:nrows
+        val = work[i] + row_act[i]
+        work[i] = val * multiplier
+        av = abs(val)
+        if av > max_err
+            max_err = av
+        end
+    end
+    return max_err
+end
+
+function clp_refine_prepare!(
+    dst_val::AbstractVector{Float64},
+    dst_idx::AbstractVector{Int32},
+    work::AbstractVector{Float64},
+    nrows::Int,
+    multiplier::Float64,
+)::Int
+    nnz = 0
+    if multiplier == 1.0
+        @inbounds for i in 1:nrows
+            val = work[i]
+            if val != 0.0
+                dst_val[i] = val
+                nnz += 1
+                dst_idx[nnz] = Int32(i)
+                work[i] = 0.0
+            end
+        end
+    else
+        @inbounds for i in 1:nrows
+            val = multiplier * work[i]
+            if val != 0.0
+                dst_val[i] = val
+                nnz += 1
+                dst_idx[nnz] = Int32(i)
+            end
+            work[i] = 0.0
+        end
+    end
+    return nnz
+end
+
+function clp_refine_combine!(
+    arr_val::AbstractVector{Float64},
+    arr_idx::AbstractVector{Int32},
+    prev_val::AbstractVector{Float64},
+    nrows::Int,
+    inv_multiplier::Float64,
+)::Int
+    nnz = 0
+    @inbounds for i in 1:nrows
+        val = _sb_fmadd(inv_multiplier, arr_val[i], prev_val[i])
+        if val != 0.0
+            arr_val[i] = val
+            nnz += 1
+            arr_idx[nnz] = Int32(i)
+        else
+            arr_val[i] = 0.0
+        end
+    end
+    return nnz
+end
+
+# --- computeDuals sub-kernels ---
+
+function clp_compute_duals_setup!(
+    arr_val::AbstractVector{Float64},
+    arr_idx::AbstractVector{Int32},
+    cost::AbstractVector{Float64},
+    pivot_var::AbstractVector{Int32},
+    given_djs::Union{AbstractVector{Float64},Nothing},
+    status::AbstractVector{UInt8},
+    nrows::Int,
+)::Int
+    nnz = 0
+    if given_djs === nothing
+        @inbounds for i in 1:nrows
+            ipiv = Int(pivot_var[i])
+            val = cost[ipiv]
+            if val != 0.0
+                arr_val[i] = val
+                nnz += 1
+                arr_idx[nnz] = Int32(i)
+            end
+        end
+    else
+        @inbounds for i in 1:nrows
+            ipiv = Int(pivot_var[i])
+            if !_sb_pivoted(status[ipiv])
+                given_djs[ipiv] = 0.0
+            end
+            val = cost[ipiv] - given_djs[ipiv]
+            if val != 0.0
+                arr_val[i] = val
+                nnz += 1
+                arr_idx[nnz] = Int32(i)
+            end
+        end
+    end
+    return nnz
+end
+
+function clp_compute_duals_collect_structurals!(
+    idx_out::AbstractVector{Int32},
+    pivot_var::AbstractVector{Int32},
+    nrows::Int,
+    ncols::Int,
+)::Int
+    n = 0
+    @inbounds for i in 1:nrows
+        ipiv = Int(pivot_var[i])
+        if ipiv <= ncols
+            n += 1
+            idx_out[n] = Int32(ipiv)
+        end
+    end
+    return n
+end
+
+function clp_compute_duals_residual!(
+    work::AbstractVector{Float64},
+    pivot_var::AbstractVector{Int32},
+    arr_val::AbstractVector{Float64},
+    row_obj::AbstractVector{Float64},
+    col_obj::AbstractVector{Float64},
+    work2::AbstractVector{Float64},
+    given_djs::Union{AbstractVector{Float64},Nothing},
+    nrows::Int,
+    ncols::Int,
+)::Float64
+    max_err = 0.0
+    ns = 0
+    if given_djs === nothing
+        @inbounds for i in 1:nrows
+            ipiv = Int(pivot_var[i])
+            if ipiv > ncols
+                r = ipiv - ncols
+                val = row_obj[r] + arr_val[r]
+            else
+                ns += 1
+                val = col_obj[ipiv] - work2[ns]
+            end
+            work[i] = val
+            av = abs(val)
+            if av > max_err
+                max_err = av
+            end
+        end
+    else
+        @inbounds for i in 1:nrows
+            ipiv = Int(pivot_var[i])
+            if ipiv > ncols
+                r = ipiv - ncols
+                val = row_obj[r] + arr_val[r] - given_djs[ipiv]
+            else
+                ns += 1
+                val = col_obj[ipiv] - work2[ns] - given_djs[ipiv]
+            end
+            work[i] = val
+            av = abs(val)
+            if av > max_err
+                max_err = av
+            end
+        end
+    end
+    return max_err
+end
+
+function clp_compute_duals_finalize_prep!(
+    dual::AbstractVector{Float64},
+    row_dj::AbstractVector{Float64},
+    col_dj::AbstractVector{Float64},
+    which_col::Union{AbstractVector{Int32},Nothing},
+    arr_val::AbstractVector{Float64},
+    row_obj::AbstractVector{Float64},
+    col_obj::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    nrows::Int,
+    ncols::Int,
+)::Int
+    @inbounds for i in 1:nrows
+        val = arr_val[i]
+        dual[i] = val
+        row_dj[i] = val + row_obj[i]
+    end
+    if which_col === nothing
+        @inbounds for j in 1:ncols
+            col_dj[j] = col_obj[j]
+        end
+        return ncols
+    else
+        n = 0
+        @inbounds for j in 1:ncols
+            if _sb_get_status(status[j]) != CLP_STATUS_BASIC
+                n += 1
+                which_col[n] = Int32(j)
+                col_dj[j] = col_obj[j]
+            else
+                col_dj[j] = 0.0
+            end
+        end
+        return n
+    end
+end
