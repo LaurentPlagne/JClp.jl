@@ -4940,3 +4940,361 @@ Base.@ccallable function jclp_dual_check_possible_cleanup(
     unsafe_store!(out_dual_in, dj_in)
     return Cint(seq_in1 > 0 ? (seq_in1 - 1) : -1)
 end
+
+# ==============================================================================
+# Phase B — B11b: ClpSimplexPrimal hot kernels (@ccallable C ABI)
+# ==============================================================================
+
+Base.@ccallable function jclp_primal_row(
+    row_val::Ptr{Cdouble},
+    row_idx::Ptr{Cint},
+    row_nnz::Cint,
+    row_cap::Cint,
+    rhs_val::Ptr{Cdouble},
+    rhs_idx::Ptr{Cint},
+    rhs_cap::Cint,
+    spare_val::Ptr{Cdouble},
+    spare_idx::Ptr{Cint},
+    spare_cap::Cint,
+    pivot_var::Ptr{Cint},
+    cost::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nlc_status::Ptr{Cuchar},
+    nlc_bound::Ptr{Cdouble},
+    nlc_infeas_weight::Cdouble,
+    nlc_num_infeas::Cint,
+    io_nlc_avg_theta::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    values_pass::Cint,
+    obj_type::Cint,
+    seq_in_0based::Cint,
+    io_dir_in::Ptr{Cint},
+    lower_in::Cdouble,
+    upper_in::Cdouble,
+    value_in::Cdouble,
+    io_dual_in::Ptr{Cdouble},
+    io_primal_tol::Ptr{Cdouble},
+    dual_tol::Cdouble,
+    infeas_cost::Cdouble,
+    large_value::Cdouble,
+    acceptable_pivot::Cdouble,
+    factor_pivots::Cint,
+    number_iterations::Cint,
+    special_options::Cint,
+    out_pivot_row_0based::Ptr{Cint},
+    io_seq_out_0based::Ptr{Cint},
+    io_dir_out::Ptr{Cint},
+    out_theta::Ptr{Cdouble},
+    io_alpha::Ptr{Cdouble},
+    io_value_out::Ptr{Cdouble},
+    io_lower_out::Ptr{Cdouble},
+    io_upper_out::Ptr{Cdouble},
+    io_dual_out::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    rc = Int(row_cap)
+    rhc = Int(rhs_cap)
+    sc = Int(spare_cap)
+    seq_in1 = Int(seq_in_0based) >= 0 ? (Int(seq_in_0based) + 1) : 0
+    seq_out0 = Int(unsafe_load(io_seq_out_0based))
+    seq_out1 = seq_out0 >= 0 ? (seq_out0 + 1) : 0
+
+    piv_row1, seq_out_out, dir_in_out, dir_out_out, th_out, al_out,
+    dual_in_out, val_out, lo_out, up_out, dj_out, ptol_out, avg_th_out = clp_primal_row!(
+        PtrView(row_val, rc),
+        ShiftedPtrView(row_idx, rc),
+        Int(row_nnz),
+        PtrView(rhs_val, rhc),
+        ShiftedPtrView(rhs_idx, rhc),
+        PtrView(spare_val, sc),
+        ShiftedPtrView(spare_idx, sc),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(cost, nt),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(dj, nt),
+        PtrView(status, nt),
+        PtrView(nlc_status, nt),
+        PtrView(nlc_bound, nt),
+        Float64(nlc_infeas_weight),
+        Int(nlc_num_infeas),
+        Float64(unsafe_load(io_nlc_avg_theta)),
+        Int(values_pass),
+        Int(obj_type),
+        seq_in1,
+        Int(unsafe_load(io_dir_in)),
+        Float64(lower_in),
+        Float64(upper_in),
+        Float64(value_in),
+        Float64(unsafe_load(io_dual_in)),
+        Float64(unsafe_load(io_primal_tol)),
+        Float64(dual_tol),
+        Float64(infeas_cost),
+        Float64(large_value),
+        Float64(acceptable_pivot),
+        Int(factor_pivots),
+        Int(number_iterations),
+        Int(special_options),
+        seq_out1,
+        Int(unsafe_load(io_dir_out)),
+        Float64(unsafe_load(io_alpha)),
+        Float64(unsafe_load(io_value_out)),
+        Float64(unsafe_load(io_lower_out)),
+        Float64(unsafe_load(io_upper_out)),
+        Float64(unsafe_load(io_dual_out)),
+    )
+
+    unsafe_store!(out_pivot_row_0based, Cint(piv_row1 - 1))
+    unsafe_store!(io_seq_out_0based, Cint(seq_out_out > 0 ? (seq_out_out - 1) : -1))
+    unsafe_store!(io_dir_in, Cint(dir_in_out))
+    unsafe_store!(io_dir_out, Cint(dir_out_out))
+    unsafe_store!(out_theta, th_out)
+    unsafe_store!(io_alpha, al_out)
+    unsafe_store!(io_dual_in, dual_in_out)
+    unsafe_store!(io_value_out, val_out)
+    unsafe_store!(io_lower_out, lo_out)
+    unsafe_store!(io_upper_out, up_out)
+    unsafe_store!(io_dual_out, dj_out)
+    unsafe_store!(io_primal_tol, ptol_out)
+    unsafe_store!(io_nlc_avg_theta, avg_th_out)
+    return nothing
+end
+
+Base.@ccallable function jclp_update_primals_in_primal(
+    row_val::Ptr{Cdouble},
+    row_idx::Ptr{Cint},
+    io_row_nnz::Ptr{Cint},
+    row_cap::Cint,
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nlc_status::Ptr{Cuchar},
+    nlc_bound::Ptr{Cdouble},
+    nlc_cost2::Ptr{Cdouble},
+    nlc_infeas_weight::Cdouble,
+    io_nlc_num_infeas::Ptr{Cint},
+    out_nlc_change_cost::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    pivot_row_0based::Cint,
+    seq_out_0based::Cint,
+    dual_in::Cdouble,
+    theta::Cdouble,
+    io_objective_change::Ptr{Cdouble},
+    primal_tol::Cdouble,
+    values_pass::Cint,
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    rc = Int(row_cap)
+    piv_row1 = Int(pivot_row_0based) + 1
+    seq_out1 = Int(seq_out_0based) >= 0 ? (Int(seq_out_0based) + 1) : 0
+
+    new_nnz, obj_chg_out, nlc_chg_cost_out, n_infeas_out = clp_update_primals_in_primal!(
+        PtrView(row_val, rc),
+        ShiftedPtrView(row_idx, rc),
+        Int(unsafe_load(io_row_nnz)),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(cost, nt),
+        PtrView(dj, nt),
+        PtrView(status, nt),
+        PtrView(nlc_status, nt),
+        PtrView(nlc_bound, nt),
+        PtrView(nlc_cost2, nt),
+        Float64(nlc_infeas_weight),
+        Int(unsafe_load(io_nlc_num_infeas)),
+        piv_row1,
+        seq_out1,
+        Float64(dual_in),
+        Float64(theta),
+        Float64(unsafe_load(io_objective_change)),
+        Float64(primal_tol),
+        Int(values_pass),
+    )
+
+    unsafe_store!(io_row_nnz, Cint(new_nnz))
+    unsafe_store!(io_objective_change, obj_chg_out)
+    unsafe_store!(out_nlc_change_cost, nlc_chg_cost_out)
+    unsafe_store!(io_nlc_num_infeas, Cint(n_infeas_out))
+    return Cint(0)
+end
+
+Base.@ccallable function jclp_primal_column_tail(
+    nlc_status::Ptr{Cuchar},
+    nlc_bound::Ptr{Cdouble},
+    nlc_cost2::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    seq_in_0based::Cint,
+    look_both_ways::Cint,
+    primal_tol::Cdouble,
+    nlc_infeas_weight::Cdouble,
+    io_nlc_num_infeas::Ptr{Cint},
+    out_value_in::Ptr{Cdouble},
+    out_dual_in::Ptr{Cdouble},
+    out_lower_in::Ptr{Cdouble},
+    out_upper_in::Ptr{Cdouble},
+    out_dir_in::Ptr{Cint},
+)::Cint
+    nt = Int(ntotal)
+    seq_in1 = Int(seq_in_0based) >= 0 ? (Int(seq_in_0based) + 1) : 0
+    seq_out, val_in, dual_in, lo_in, up_in, dir_in, n_infeas_out = clp_primal_column_tail!(
+        PtrView(nlc_status, nt),
+        PtrView(nlc_bound, nt),
+        PtrView(nlc_cost2, nt),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(cost, nt),
+        PtrView(dj, nt),
+        PtrView(status, nt),
+        seq_in1,
+        look_both_ways != Cint(0),
+        Float64(primal_tol),
+        Float64(nlc_infeas_weight),
+        Int(unsafe_load(io_nlc_num_infeas)),
+    )
+    if seq_out > 0
+        unsafe_store!(out_value_in, val_in)
+        unsafe_store!(out_dual_in, dual_in)
+        unsafe_store!(out_lower_in, lo_in)
+        unsafe_store!(out_upper_in, up_in)
+        unsafe_store!(out_dir_in, Cint(dir_in))
+        unsafe_store!(io_nlc_num_infeas, Cint(n_infeas_out))
+        return Cint(seq_out - 1)
+    end
+    return Cint(-1)
+end
+
+Base.@ccallable function jclp_primal_ray(
+    ray::Ptr{Cdouble},
+    row_val::Ptr{Cdouble},
+    row_idx::Ptr{Cint},
+    row_nnz::Cint,
+    row_cap::Cint,
+    packed::Cint,
+    pivot_var::Ptr{Cint},
+    nrows::Cint,
+    ncols::Cint,
+    seq_in_0based::Cint,
+    dir_in::Cint,
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    rc = Int(row_cap)
+    seq_in1 = Int(seq_in_0based) >= 0 ? (Int(seq_in_0based) + 1) : 0
+    clp_primal_ray!(
+        PtrView(ray, nc),
+        PtrView(row_val, rc),
+        ShiftedPtrView(row_idx, rc),
+        Int(row_nnz),
+        packed != Cint(0),
+        ShiftedPtrView(pivot_var, nr),
+        nc,
+        seq_in1,
+        Int(dir_in),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_primal_next_super_basic(
+    col_val::Ptr{Cdouble},
+    col_idx::Ptr{Cint},
+    io_col_nnz::Ptr{Cint},
+    col_cap::Cint,
+    dj::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    super_basic_type::Cint,
+    io_first_free_0based::Ptr{Cint},
+    io_more_special_options::Ptr{Cint},
+    primal_tol::Cdouble,
+    dual_tol::Cdouble,
+)::Cint
+    nt = Int(ntotal)
+    cc = Int(col_cap)
+    ff0 = Int(unsafe_load(io_first_free_0based))
+    ff1 = ff0 >= 0 ? (ff0 + 1) : 0
+
+    ret1, ff_out, nnz_out, mso_out = clp_primal_next_super_basic!(
+        PtrView(col_val, cc),
+        ShiftedPtrView(col_idx, cc),
+        Int(unsafe_load(io_col_nnz)),
+        PtrView(dj, nt),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(status, nt),
+        nt,
+        Int(super_basic_type),
+        ff1,
+        Int(unsafe_load(io_more_special_options)),
+        Float64(primal_tol),
+        Float64(dual_tol),
+    )
+
+    unsafe_store!(io_col_nnz, Cint(nnz_out))
+    unsafe_store!(io_first_free_0based, Cint(ff_out > 0 ? (ff_out - 1) : -1))
+    unsafe_store!(io_more_special_options, Cint(mso_out))
+    return Cint(ret1 > 0 ? (ret1 - 1) : -1)
+end
+
+Base.@ccallable function jclp_primal_unflag(
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    dual_tol::Cdouble,
+    largest_dual_err::Cdouble,
+)::Cint
+    nt = Int(ntotal)
+    return Cint(clp_primal_unflag!(
+        PtrView(dj, nt),
+        PtrView(status, nt),
+        nt,
+        Float64(dual_tol),
+        Float64(largest_dual_err),
+    ))
+end
+
+Base.@ccallable function jclp_primal_clear_all(
+    row_val::Ptr{Cdouble},
+    row_idx::Ptr{Cint},
+    row_nnz::Cint,
+    row_cap::Cint,
+    packed::Cint,
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+)::Cint
+    rc = Int(row_cap)
+    nt = Int(ntotal)
+    return Cint(clp_primal_clear_all!(
+        PtrView(row_val, rc),
+        ShiftedPtrView(row_idx, rc),
+        Int(row_nnz),
+        rc,
+        packed != Cint(0),
+        PtrView(status, nt),
+    ))
+end

@@ -23,4 +23,5 @@ using Test
     include("test_b9c_nonlinear_cost.jl")
     include("test_b10_clp_factorization.jl")
     include("test_b11a_simplex_dual.jl")
+    include("test_b11b_simplex_primal.jl")
 end

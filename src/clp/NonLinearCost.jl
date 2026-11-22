@@ -10,6 +10,7 @@ const CLP_NLC_SAME        = UInt8(4)
 @inline _nlc_orig_status(s::UInt8) = s & UInt8(15)
 @inline _nlc_curr_status(s::UInt8) = s >> 4
 @inline _nlc_set_orig_status(s::UInt8, v::UInt8) = (s & ~UInt8(15)) | v
+@inline _nlc_set_curr_status(s::UInt8, v::UInt8) = (s & ~UInt8(15 << 4)) | (v << 4)
 @inline _nlc_set_same_status(s::UInt8) = (s & ~UInt8(15 << 4)) | (CLP_NLC_SAME << 4)
 @inline _nlc_set_model_status(st::UInt8, new_st::UInt8) = (st & ~CLP_STATUS_MASK) | new_st
 
@@ -332,4 +333,42 @@ function clp_nlc_refresh_one!(
         end
     end
     return nothing
+end
+
+@inline function clp_nlc_change_in_cost_m2!(
+    nlc_status::AbstractVector{UInt8},
+    bound::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    iseq::Int,
+    alpha::Float64,
+    rhs::Float64,
+    infeas_weight::Float64,
+)::Tuple{Float64,Float64}
+    dbl_max = floatmax(Float64)
+    @inbounds begin
+        ist = nlc_status[iseq]
+        iwhere = _nlc_curr_status(ist)
+        if iwhere == CLP_NLC_SAME
+            iwhere = _nlc_orig_status(ist)
+        end
+        if iwhere == CLP_NLC_FEASIBLE
+            if alpha > 0.0
+                iwhere = CLP_NLC_BELOW_LOWER
+                rhs = dbl_max
+            else
+                iwhere = CLP_NLC_ABOVE_UPPER
+                rhs = dbl_max
+            end
+        elseif iwhere == CLP_NLC_BELOW_LOWER
+            iwhere = CLP_NLC_FEASIBLE
+            rhs += bound[iseq] - upper[iseq]
+        else
+            iwhere = CLP_NLC_FEASIBLE
+            rhs += lower[iseq] - bound[iseq]
+        end
+        nlc_status[iseq] = _nlc_set_curr_status(ist, iwhere)
+        delta_cost = abs(alpha) * infeas_weight
+        return (delta_cost, rhs)
+    end
 end

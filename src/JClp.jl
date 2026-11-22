@@ -28,6 +28,7 @@ include("clp/PrimalColumnPivot.jl")
 include("clp/NonLinearCost.jl")
 include("clp/Factorization.jl")
 include("clp/SimplexDual.jl")
+include("clp/SimplexPrimal.jl")
 
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
 include("bridge/PtrView.jl")
