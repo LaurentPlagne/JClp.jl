@@ -1746,3 +1746,874 @@ Base.@ccallable function jclp_lu_replace_column_pfi(
     end
     return Cint(ret)
 end
+
+# ==============================================================================
+# Phase B — B8: ClpPackedMatrix (@ccallable C ABI -> pure 1-based Julia kernels)
+# ==============================================================================
+
+Base.@ccallable function jclp_pm_times(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    has_gaps::Cint,
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    scalar::Cdouble,
+    x::Ptr{Cdouble},
+    y::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    xv = PtrView(x, na)
+    yv = PtrView(y, nr)
+    gaps = has_gaps != Cint(0)
+    if row_scale != C_NULL
+        rs = PtrView(row_scale, nr)
+        cs = PtrView(col_scale, na)
+        if gaps
+            clp_mat_times_scaled!(st, PtrView(lengths, na), true, idx, el, na, Float64(scalar), xv, yv, rs, cs)
+        else
+            clp_mat_times_scaled!(st, nothing, false, idx, el, na, Float64(scalar), xv, yv, rs, cs)
+        end
+    else
+        if gaps
+            clp_mat_times_unscaled!(st, PtrView(lengths, na), true, idx, el, na, Float64(scalar), xv, yv)
+        else
+            clp_mat_times_unscaled!(st, nothing, false, idx, el, na, Float64(scalar), xv, yv)
+        end
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_transpose_times(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    has_gaps::Cint,
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    scalar::Cdouble,
+    x::Ptr{Cdouble},
+    y::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    spare::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    xv = PtrView(x, nr)
+    yv = PtrView(y, na)
+    gaps = has_gaps != Cint(0)
+    if row_scale != C_NULL
+        rs = PtrView(row_scale, nr)
+        cs = PtrView(col_scale, na)
+        if spare != C_NULL
+            sp = PtrView(spare, nr)
+            if gaps
+                clp_mat_transpose_times_scaled!(st, PtrView(lengths, na), true, idx, el, nr, na, Float64(scalar), xv, yv, rs, cs, sp)
+            else
+                clp_mat_transpose_times_scaled!(st, nothing, false, idx, el, nr, na, Float64(scalar), xv, yv, rs, cs, sp)
+            end
+        else
+            if gaps
+                clp_mat_transpose_times_scaled!(st, PtrView(lengths, na), true, idx, el, nr, na, Float64(scalar), xv, yv, rs, cs, nothing)
+            else
+                clp_mat_transpose_times_scaled!(st, nothing, false, idx, el, nr, na, Float64(scalar), xv, yv, rs, cs, nothing)
+            end
+        end
+    else
+        if gaps
+            clp_mat_transpose_times_unscaled!(st, PtrView(lengths, na), true, idx, el, na, Float64(scalar), xv, yv)
+        else
+            clp_mat_transpose_times_unscaled!(st, nothing, false, idx, el, na, Float64(scalar), xv, yv)
+        end
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_transpose_times_subset(
+    starts::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    nwhich::Cint,
+    which::Ptr{Cint},
+    x::Ptr{Cdouble},
+    y::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    spare::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nw = Int(nwhich)
+    st = ShiftedPtrView(starts, nc + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    wh = ShiftedPtrView(which, nw)
+    xv = PtrView(x, nr)
+    yv = PtrView(y, nc)
+    if row_scale != C_NULL
+        rs = PtrView(row_scale, nr)
+        cs = PtrView(col_scale, nc)
+        if spare != C_NULL
+            clp_mat_transpose_times_subset!(st, idx, el, nr, nw, wh, xv, yv, rs, cs, PtrView(spare, nr))
+        else
+            clp_mat_transpose_times_subset!(st, idx, el, nr, nw, wh, xv, yv, rs, cs, nothing)
+        end
+    else
+        clp_mat_transpose_times_subset!(st, idx, el, nr, nw, wh, xv, yv, nothing, nothing, nothing)
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_guts_tt_unscaled(
+    starts::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    pi::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    zero_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    pv = PtrView(pi, nr)
+    oi = ShiftedPtrView(out_idx, na)
+    ov = PtrView(out_val, na)
+    if status != C_NULL
+        nnz = clp_mat_guts_tt_unscaled_status!(st, idx, el, na, pv, oi, ov, PtrView(status, na), Float64(zero_tol))
+    else
+        nnz = clp_mat_guts_tt_unscaled!(st, idx, el, na, pv, oi, ov, Float64(zero_tol))
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_guts_tt_scaled(
+    starts::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    pi::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    zero_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    pv = PtrView(pi, nr)
+    cs = PtrView(col_scale, na)
+    oi = ShiftedPtrView(out_idx, na)
+    ov = PtrView(out_val, na)
+    if status != C_NULL
+        nnz = clp_mat_guts_tt_scaled_status!(st, idx, el, na, pv, cs, oi, ov, PtrView(status, na), Float64(zero_tol))
+    else
+        nnz = clp_mat_guts_tt_scaled!(st, idx, el, na, pv, cs, oi, ov, Float64(zero_tol))
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_guts_tt_unscaled_dual(
+    starts::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    pi::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    spare_idx::Ptr{Cint},
+    spare_val::Ptr{Cdouble},
+    spare_cap::Cint,
+    reduced_cost::Ptr{Cdouble},
+    io_upper_theta::Ptr{Cdouble},
+    acceptable_pivot::Cdouble,
+    dual_tol::Cdouble,
+    io_nremaining::Ptr{Cint},
+    zero_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    sc = Int(spare_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    pv = PtrView(pi, nr)
+    oi = ShiftedPtrView(out_idx, na)
+    ov = PtrView(out_val, na)
+    sv = PtrView(status, na)
+    si = ShiftedPtrView(spare_idx, sc)
+    spv = PtrView(spare_val, sc)
+    rc = PtrView(reduced_cost, na)
+    ut0 = unsafe_load(io_upper_theta)
+    nrem0 = Int(unsafe_load(io_nremaining))
+    nnz, nrem1, ut1 = clp_mat_guts_tt_unscaled_dual!(
+        st, idx, el, na, pv, oi, ov, sv, si, spv, rc,
+        ut0, Float64(acceptable_pivot), Float64(dual_tol), nrem0, Float64(zero_tol),
+    )
+    unsafe_store!(io_upper_theta, ut1)
+    unsafe_store!(io_nremaining, Cint(nrem1))
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_col_unpacked(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    has_gaps::Cint,
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    scalar::Cdouble,
+    pi::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    zero_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    pv = PtrView(pi, nr)
+    oi = ShiftedPtrView(out_idx, na)
+    ov = PtrView(out_val, na)
+    gaps = has_gaps != Cint(0)
+    if row_scale != C_NULL
+        rs = PtrView(row_scale, nr)
+        cs = PtrView(col_scale, na)
+        if gaps
+            nnz = clp_mat_tt_by_col_unpacked!(st, PtrView(lengths, na), true, idx, el, na, Float64(scalar), pv, rs, cs, oi, ov, Float64(zero_tol))
+        else
+            nnz = clp_mat_tt_by_col_unpacked!(st, nothing, false, idx, el, na, Float64(scalar), pv, rs, cs, oi, ov, Float64(zero_tol))
+        end
+    else
+        if gaps
+            nnz = clp_mat_tt_by_col_unpacked!(st, PtrView(lengths, na), true, idx, el, na, Float64(scalar), pv, nothing, nothing, oi, ov, Float64(zero_tol))
+        else
+            nnz = clp_mat_tt_by_col_unpacked!(st, nothing, false, idx, el, na, Float64(scalar), pv, nothing, nothing, oi, ov, Float64(zero_tol))
+        end
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_col_packed_gaps(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    scalar::Cdouble,
+    pi_old::Ptr{Cdouble},
+    which_row::Ptr{Cint},
+    n_in_row::Cint,
+    pi_work::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    zero_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    nin = Int(n_in_row)
+    st = ShiftedPtrView(starts, na + 1)
+    lens = PtrView(lengths, na)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    po = PtrView(pi_old, nin)
+    wr = ShiftedPtrView(which_row, nin)
+    pw = PtrView(pi_work, nr)
+    oi = ShiftedPtrView(out_idx, na)
+    ov = PtrView(out_val, na)
+    if row_scale != C_NULL
+        nnz = clp_mat_tt_by_col_packed_gaps!(st, lens, idx, el, na, Float64(scalar), po, wr, nin, pw, PtrView(row_scale, nr), PtrView(col_scale, na), oi, ov, Float64(zero_tol))
+    else
+        nnz = clp_mat_tt_by_col_packed_gaps!(st, lens, idx, el, na, Float64(scalar), po, wr, nin, pw, nothing, nothing, oi, ov, Float64(zero_tol))
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_row_eq1_packed(
+    row_starts::Ptr{Cint},
+    cols::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    irow_0based::Cint,
+    pi0::Cdouble,
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    zero_tol::Cdouble,
+    scalar::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nnz = clp_mat_tt_by_row_eq1_packed!(
+        ShiftedPtrView(row_starts, nr + 1),
+        ShiftedPtrView(cols, nz),
+        PtrView(elements, nz),
+        Int(irow_0based) + 1,
+        Float64(pi0),
+        ShiftedPtrView(out_idx, nc),
+        PtrView(out_val, nc),
+        Float64(zero_tol),
+        Float64(scalar),
+    )
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_row_eq2_packed(
+    row_starts::Ptr{Cint},
+    cols::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    irow0_0based::Cint,
+    irow1_0based::Cint,
+    pi0::Cdouble,
+    pi1::Cdouble,
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    marked::Ptr{Cuchar},
+    lookup::Ptr{Cint},
+    zero_tol::Cdouble,
+    scalar::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nnz = clp_mat_tt_by_row_eq2_packed!(
+        ShiftedPtrView(row_starts, nr + 1),
+        ShiftedPtrView(cols, nz),
+        PtrView(elements, nz),
+        Int(irow0_0based) + 1,
+        Int(irow1_0based) + 1,
+        Float64(pi0),
+        Float64(pi1),
+        ShiftedPtrView(out_idx, nc),
+        PtrView(out_val, nc),
+        PtrView(marked, nc),
+        PtrView(lookup, nc),
+        Float64(zero_tol),
+        Float64(scalar),
+    )
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_row_ge3_packed(
+    row_starts::Ptr{Cint},
+    cols::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    which_row::Ptr{Cint},
+    pi::Ptr{Cdouble},
+    n_in_row::Cint,
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    work::Ptr{Cdouble},
+    zero_tol::Cdouble,
+    scalar::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nin = Int(n_in_row)
+    nnz = clp_mat_tt_by_row_ge3_packed!(
+        ShiftedPtrView(row_starts, nr + 1),
+        ShiftedPtrView(cols, nz),
+        PtrView(elements, nz),
+        ShiftedPtrView(which_row, nin),
+        PtrView(pi, nin),
+        nin,
+        ShiftedPtrView(out_idx, nc),
+        PtrView(out_val, nc),
+        PtrView(work, nc),
+        Float64(zero_tol),
+        Float64(scalar),
+    )
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_row_gek_packed(
+    row_starts::Ptr{Cint},
+    cols::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    which_row::Ptr{Cint},
+    pi::Ptr{Cdouble},
+    n_in_row::Cint,
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    zero_tol::Cdouble,
+    scalar::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nin = Int(n_in_row)
+    nnz = clp_mat_tt_by_row_gek_packed!(
+        ShiftedPtrView(row_starts, nr + 1),
+        ShiftedPtrView(cols, nz),
+        PtrView(elements, nz),
+        ShiftedPtrView(which_row, nin),
+        PtrView(pi, nin),
+        nin,
+        nc,
+        ShiftedPtrView(out_idx, nc),
+        PtrView(out_val, nc),
+        Float64(zero_tol),
+        Float64(scalar),
+    )
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_tt_by_row_unpacked(
+    row_starts::Ptr{Cint},
+    cols::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    which_row::Ptr{Cint},
+    pi::Ptr{Cdouble},
+    n_in_row::Cint,
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    marked::Ptr{Cuchar},
+    zero_tol::Cdouble,
+    scalar::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nin = Int(n_in_row)
+    nnz = clp_mat_tt_by_row_unpacked!(
+        ShiftedPtrView(row_starts, nr + 1),
+        ShiftedPtrView(cols, nz),
+        PtrView(elements, nz),
+        ShiftedPtrView(which_row, nin),
+        PtrView(pi, nr),
+        nin,
+        ShiftedPtrView(out_idx, nc),
+        PtrView(out_val, nc),
+        PtrView(marked, nc),
+        Float64(zero_tol),
+        Float64(scalar),
+    )
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_subset_tt(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    has_gaps::Cint,
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    which::Ptr{Cint},
+    n_to_do::Cint,
+    pi::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_val::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nt = Int(n_to_do)
+    st = ShiftedPtrView(starts, nc + 1)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    wh = ShiftedPtrView(which, nt)
+    pv = PtrView(pi, nr)
+    ov = PtrView(out_val, nt)
+    gaps = has_gaps != Cint(0)
+    if row_scale != C_NULL
+        rs = PtrView(row_scale, nr)
+        cs = PtrView(col_scale, nc)
+        if gaps
+            clp_mat_subset_tt!(st, PtrView(lengths, nc), true, idx, el, wh, nt, pv, rs, cs, ov)
+        else
+            clp_mat_subset_tt!(st, nothing, false, idx, el, wh, nt, pv, rs, cs, ov)
+        end
+    else
+        if gaps
+            clp_mat_subset_tt!(st, PtrView(lengths, nc), true, idx, el, wh, nt, pv, nothing, nothing, ov)
+        else
+            clp_mat_subset_tt!(st, nothing, false, idx, el, wh, nt, pv, nothing, nothing, ov)
+        end
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_unpack(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    icol_0based::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    nnz_in::Cint,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, nc + 1)
+    lens = PtrView(lengths, nc)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    oi = ShiftedPtrView(out_idx, nr)
+    ov = PtrView(out_val, nr)
+    if row_scale != C_NULL
+        nnz = clp_mat_unpack!(st, lens, idx, el, Int(icol_0based) + 1, PtrView(row_scale, nr), PtrView(col_scale, nc), oi, ov, Int(nnz_in))
+    else
+        nnz = clp_mat_unpack!(st, lens, idx, el, Int(icol_0based) + 1, nothing, nothing, oi, ov, Int(nnz_in))
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_unpack_packed(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    icol_0based::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, nc + 1)
+    lens = PtrView(lengths, nc)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    oi = ShiftedPtrView(out_idx, nr)
+    ov = PtrView(out_val, nr)
+    if row_scale != C_NULL
+        nnz = clp_mat_unpack_packed!(st, lens, idx, el, Int(icol_0based) + 1, PtrView(row_scale, nr), PtrView(col_scale, nc), oi, ov)
+    else
+        nnz = clp_mat_unpack_packed!(st, lens, idx, el, Int(icol_0based) + 1, nothing, nothing, oi, ov)
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_add_indexed(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    icol_0based::Cint,
+    multiplier::Cdouble,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    out_val::Ptr{Cdouble},
+    nnz_in::Cint,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, nc + 1)
+    lens = PtrView(lengths, nc)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    oi = ShiftedPtrView(out_idx, nr)
+    ov = PtrView(out_val, nr)
+    if row_scale != C_NULL
+        nnz = clp_mat_add_indexed!(st, lens, idx, el, Int(icol_0based) + 1, Float64(multiplier), PtrView(row_scale, nr), PtrView(col_scale, nc), oi, ov, Int(nnz_in))
+    else
+        nnz = clp_mat_add_indexed!(st, lens, idx, el, Int(icol_0based) + 1, Float64(multiplier), nothing, nothing, oi, ov, Int(nnz_in))
+    end
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_pm_add_dense(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    icol_0based::Cint,
+    multiplier::Cdouble,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    array::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, nc + 1)
+    lens = PtrView(lengths, nc)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    av = PtrView(array, nr)
+    if row_scale != C_NULL
+        clp_mat_add_dense!(st, lens, idx, el, Int(icol_0based) + 1, Float64(multiplier), PtrView(row_scale, nr), PtrView(col_scale, nc), av)
+    else
+        clp_mat_add_dense!(st, lens, idx, el, Int(icol_0based) + 1, Float64(multiplier), nothing, nothing, av)
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_count_basis(
+    lengths::Ptr{Cint},
+    ncols::Cint,
+    which_col::Ptr{Cint},
+    n_col_basic::Cint,
+)::Cint
+    nc = Int(ncols)
+    nb = Int(n_col_basic)
+    return Cint(clp_mat_count_basis(PtrView(lengths, nc), ShiftedPtrView(which_col, nb), nb))
+end
+
+Base.@ccallable function jclp_pm_fill_basis(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    has_zeros::Cint,
+    which_col::Ptr{Cint},
+    n_col_basic::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    index_row_u::Ptr{Cint},
+    start_u::Ptr{Cint},
+    row_count::Ptr{Cint},
+    col_count::Ptr{Cint},
+    element_u::Ptr{Cdouble},
+    u_cap::Cint,
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    nb = Int(n_col_basic)
+    uc = Int(u_cap)
+    st = ShiftedPtrView(starts, nc + 1)
+    lens = PtrView(lengths, nc)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    wc = ShiftedPtrView(which_col, nb)
+    iru = ShiftedPtrView(index_row_u, uc)
+    su = ShiftedPtrView(start_u, nb + 1)
+    rc = PtrView(row_count, nr)
+    cc = PtrView(col_count, nb)
+    eu = PtrView(element_u, uc)
+    hz = has_zeros != Cint(0)
+    if row_scale != C_NULL
+        clp_mat_fill_basis!(st, lens, idx, el, hz, wc, nb, PtrView(row_scale, nr), PtrView(col_scale, nc), iru, su, rc, cc, eu)
+    else
+        clp_mat_fill_basis!(st, lens, idx, el, hz, wc, nb, nothing, nothing, iru, su, rc, cc, eu)
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_range_of_elements(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    ncols::Cint,
+    nnz_cap::Cint,
+    out_sn::Ptr{Cdouble},
+    out_ln::Ptr{Cdouble},
+    out_sp::Ptr{Cdouble},
+    out_lp::Ptr{Cdouble},
+)::Cvoid
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    sn, ln, sp, lp = clp_mat_range_of_elements(
+        ShiftedPtrView(starts, nc + 1),
+        PtrView(lengths, nc),
+        PtrView(elements, nz),
+        nc,
+    )
+    unsafe_store!(out_sn, sn)
+    unsafe_store!(out_ln, ln)
+    unsafe_store!(out_sp, sp)
+    unsafe_store!(out_lp, lp)
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_scale_row_copy(
+    row_starts::Ptr{Cint},
+    cols::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    clp_mat_scale_row_copy!(
+        ShiftedPtrView(row_starts, nr + 1),
+        ShiftedPtrView(cols, nz),
+        PtrView(elements, nz),
+        nr,
+        PtrView(row_scale, nr),
+        PtrView(col_scale, nc),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_really_scale(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    nnz_cap::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz_cap)
+    clp_mat_really_scale!(
+        ShiftedPtrView(starts, nc + 1),
+        PtrView(lengths, nc),
+        ShiftedPtrView(indices, nz),
+        PtrView(elements, nz),
+        nc,
+        PtrView(row_scale, nr),
+        PtrView(col_scale, nc),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_pm_partial_pricing(
+    starts::Ptr{Cint},
+    lengths::Ptr{Cint},
+    indices::Ptr{Cint},
+    elements::Ptr{Cdouble},
+    nrows::Cint,
+    nactive::Cint,
+    nnz_cap::Cint,
+    start_frac::Cdouble,
+    end_frac::Cdouble,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    duals::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    reduced_cost::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    seq_out_0based::Cint,
+    io_best_seq_0based::Ptr{Cint},
+    best_dj::Cdouble,
+    io_n_wanted::Ptr{Cint},
+    orig_wanted::Cint,
+    min_scan::Cint,
+    min_good::Cint,
+    tol::Cdouble,
+    out_saved_dj::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    na = Int(nactive)
+    nz = Int(nnz_cap)
+    st = ShiftedPtrView(starts, na + 1)
+    lens = PtrView(lengths, na)
+    idx = ShiftedPtrView(indices, nz)
+    el = PtrView(elements, nz)
+    dv = PtrView(duals, nr)
+    cv = PtrView(cost, na)
+    rc = PtrView(reduced_cost, na)
+    sv = PtrView(status, na)
+    best0 = Int(unsafe_load(io_best_seq_0based))
+    best1 = best0 >= 0 ? (best0 + 1) : 0
+    seq_out1 = Int(seq_out_0based) >= 0 ? (Int(seq_out_0based) + 1) : 0
+    nw0 = Int(unsafe_load(io_n_wanted))
+    if row_scale != C_NULL
+        b_out, nw_out, sdj = clp_mat_partial_pricing!(
+            st, lens, idx, el, na, Float64(start_frac), Float64(end_frac),
+            PtrView(row_scale, nr), PtrView(col_scale, na),
+            dv, cv, rc, sv, seq_out1, best1, Float64(best_dj),
+            nw0, Int(orig_wanted), Int(min_scan), Int(min_good), Float64(tol),
+        )
+    else
+        b_out, nw_out, sdj = clp_mat_partial_pricing!(
+            st, lens, idx, el, na, Float64(start_frac), Float64(end_frac),
+            nothing, nothing,
+            dv, cv, rc, sv, seq_out1, best1, Float64(best_dj),
+            nw0, Int(orig_wanted), Int(min_scan), Int(min_good), Float64(tol),
+        )
+    end
+    unsafe_store!(io_best_seq_0based, Cint(b_out > 0 ? (b_out - 1) : -1))
+    unsafe_store!(io_n_wanted, Cint(nw_out))
+    unsafe_store!(out_saved_dj, sdj)
+    return nothing
+end

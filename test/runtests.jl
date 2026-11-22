@@ -17,4 +17,5 @@ using Test
     include("test_b7c1_presolve_adv1.jl")
     include("test_b7c2_presolve_adv2.jl")
     include("test_sparse_lu_native.jl")
+    include("test_b8_clp_packed_matrix.jl")
 end

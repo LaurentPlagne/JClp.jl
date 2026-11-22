@@ -22,6 +22,7 @@ include("coinutils/CoinPresolveAdvanced2.jl")
 
 # Pure Idiomatic 1-based Julia Core (zero Ptr / unsafe_load / PodView)
 include("coinutils/SparseLU/SparseLU.jl")
+include("clp/PackedMatrix.jl")
 
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
 include("bridge/PtrView.jl")
