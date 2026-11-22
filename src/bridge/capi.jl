@@ -1266,3 +1266,483 @@ Base.@ccallable function jclp_ps_twoxtwo_postsolve(
     ps_twoxtwo_postsolve!(p_ptr, actions, Int32(nactions))
     return nothing
 end
+
+# =============================================================================
+# Native Pure-Julia SparseLU Bridge (JCLP_BRICK_LU_NATIVE=1)
+# Thin PtrView + opaque handle boundary; zero Ptr/unsafe_load inside SparseLU/.
+# =============================================================================
+
+Base.@ccallable function jclp_lu_create()::Cint
+    return Cint(_lu_handle_create())
+end
+
+Base.@ccallable function jclp_lu_copy(src_id::Cint)::Cint
+    return Cint(_lu_handle_copy(Int32(src_id)))
+end
+
+Base.@ccallable function jclp_lu_assign(dst_id::Cint, src_id::Cint)::Cvoid
+    _lu_handle_assign!(Int32(dst_id), Int32(src_id))
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_destroy(id::Cint)::Cvoid
+    _lu_handle_destroy!(Int32(id))
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_load_and_preprocess(
+    id::Cint,
+    state::Cint,
+    nrows::Cint,
+    ncols::Cint,
+    nnz::Cint,
+    len_area_l::Cint,
+    len_area_u::Cint,
+    max_pivots::Cint,
+    bias_lu::Cint,
+    dense_thresh::Cint,
+    sparse_thresh::Cint,
+    num_trials::Cint,
+    do_ft::Cint,
+    collect_stats::Cint,
+    zero_tol::Cdouble,
+    pivot_tol::Cdouble,
+    relax_check::Cdouble,
+    slack_val::Cdouble,
+    area_factor::Cdouble,
+    start_col_u::Ptr{Cint},
+    len_col_u::Ptr{Cint},
+    index_row_u::Ptr{Cint},
+    index_col_u::Ptr{Cint},
+    element_u::Ptr{Cdouble},
+    len_row_u::Ptr{Cint},
+)::Cvoid
+    lu = _lu_get(Int32(id))
+    lu.max_pivots = Int(max_pivots)
+    lu.bias_lu = Int(bias_lu)
+    lu.dense_threshold = Int(dense_thresh)
+    lu.sparse_threshold = Int(sparse_thresh)
+    lu.num_trials = Int(num_trials)
+    lu.do_forrest_tomlin = do_ft != Cint(0)
+    lu.collect_statistics = collect_stats != Cint(0)
+    lu.zero_tol = Float64(zero_tol)
+    lu.pivot_tol = Float64(pivot_tol)
+    lu.relax_check = Float64(relax_check)
+    lu.slack_value = Float64(slack_val)
+    lu.area_factor = Float64(area_factor)
+
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz)
+    allocate_areas!(lu, nr, nc, Int(len_area_l), Int(len_area_u); already_scaled = true)
+
+    st = Int(state)
+    if st <= 1
+        load_triplets!(
+            lu, nr, nc, nz,
+            PtrView(index_row_u, nz),
+            PtrView(index_col_u, nz),
+            PtrView(element_u, nz);
+            zero_based = true,
+        )
+        if st == -1 || st == 1
+            rc = PtrView(len_row_u, nr)
+            cc = PtrView(len_col_u, nc)
+            @inbounds for i in 1:nr
+                lu.len_row_u[i] = rc[i]
+            end
+            @inbounds for j in 1:nc
+                lu.len_col_u[j] = cc[j]
+            end
+        end
+    else
+        rc_view = len_row_u != C_NULL ? PtrView(len_row_u, nr) : nothing
+        load_csc!(
+            lu, nr, nc, nz,
+            PtrView(start_col_u, nc),
+            PtrView(len_col_u, nc),
+            PtrView(index_row_u, nz),
+            PtrView(element_u, nz),
+            rc_view;
+            zero_based = true,
+        )
+    end
+    preprocess!(lu, st)
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_factor(
+    id::Cint,
+    out_permute::Ptr{Cint},
+    out_permute_back::Ptr{Cint},
+    out_pivot_col::Ptr{Cint},
+    out_pivot_col_back::Ptr{Cint},
+    out_meta_i32::Ptr{Cint},
+    out_area_factor::Ptr{Cdouble},
+)::Cint
+    lu = _lu_get(Int32(id))
+    st = factor!(lu)
+    nr = lu.nrows
+    nc = lu.ncols
+
+    if st == 0
+        if out_permute != C_NULL
+            p_out = PtrView(out_permute, nr)
+            @inbounds for i in 1:nr
+                p_out[i] = lu.permute[i] - Int32(1)
+            end
+        end
+        if out_permute_back != C_NULL
+            pb_out = PtrView(out_permute_back, nr)
+            @inbounds for i in 1:nr
+                pb_out[i] = lu.permute_back[i] - Int32(1)
+            end
+        end
+        if out_pivot_col != C_NULL
+            pc_out = PtrView(out_pivot_col, nc)
+            @inbounds for i in 1:nc
+                v = lu.pivot_col[i]
+                pc_out[i] = v > LU_NO_LINK ? (v - Int32(1)) : Int32(-1)
+            end
+        end
+        if out_pivot_col_back != C_NULL
+            pcb_out = PtrView(out_pivot_col_back, nr)
+            @inbounds for i in 1:nr
+                pcb_out[i] = lu.pivot_col_back[i] - Int32(1)
+            end
+        end
+        finalize_basis_permutation!(lu)
+    elseif st == -1
+        if out_permute != C_NULL
+            p_out = PtrView(out_permute, nr)
+            @inbounds for i in 1:nr
+                v = lu.permute[i]
+                p_out[i] = v > LU_NO_LINK ? (v - Int32(1)) : Int32(-1)
+            end
+        end
+        if out_pivot_col != C_NULL
+            pc_out = PtrView(out_pivot_col, nc)
+            @inbounds for i in 1:nc
+                v = lu.pivot_col[i]
+                pc_out[i] = v > LU_NO_LINK ? (v - Int32(1)) : Int32(-1)
+            end
+        end
+    end
+
+    if out_meta_i32 != C_NULL
+        meta = PtrView(out_meta_i32, 13)
+        @inbounds begin
+            meta[1]  = Int32(lu.ngood_u)
+            meta[2]  = Int32(lu.nu)
+            meta[3]  = Int32(lu.nl)
+            meta[4]  = Int32(lu.base_l)
+            meta[5]  = Int32(lu.ndense)
+            meta[6]  = Int32(lu.nslacks)
+            meta[7]  = Int32(lu.len_u)
+            meta[8]  = Int32(lu.len_l)
+            meta[9]  = Int32(lu.len_area_r)
+            meta[10] = Int32(lu.total_elements)
+            meta[11] = Int32(lu.factor_elements)
+            meta[12] = Int32(lu.ncompressions)
+            meta[13] = Int32(lu.max_u)
+        end
+    end
+    if out_area_factor != C_NULL
+        unsafe_store!(out_area_factor, lu.area_factor)
+    end
+    return Cint(st)
+end
+
+Base.@ccallable function jclp_lu_go_sparse(
+    id::Cint,
+    sparse_thresh_in::Cint,
+    out_sp1::Ptr{Cint},
+    out_sp2::Ptr{Cint},
+)::Cvoid
+    lu = _lu_get(Int32(id))
+    lu.sparse_threshold = Int(sparse_thresh_in)
+    go_sparse!(lu)
+    if out_sp1 != C_NULL
+        unsafe_store!(out_sp1, Cint(lu.sparse_threshold))
+    end
+    if out_sp2 != C_NULL
+        unsafe_store!(out_sp2, Cint(lu.sparse_threshold2))
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_check_sparse(id::Cint)::Cvoid
+    check_sparse!(_lu_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_reset_stats(id::Cint)::Cvoid
+    reset_statistics!(_lu_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_get_weights(
+    id::Cint,
+    weights_ptr::Ptr{Cint},
+    nrows::Cint,
+)::Cvoid
+    get_weights!(_lu_get(Int32(id)), PtrView(weights_ptr, Int(nrows)))
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_export_for_network(
+    id::Cint,
+    out_piv_reg::Ptr{Cdouble},
+    out_perm_back::Ptr{Cint},
+    out_start_col_u::Ptr{Cint},
+    out_len_col_u::Ptr{Cint},
+    out_idx_row_u::Ptr{Cint},
+    out_el_u::Ptr{Cdouble},
+)::Cvoid
+    lu = _lu_get(Int32(id))
+    nr = lu.nrows
+    nz = lu.len_u
+    pr = PtrView(out_piv_reg, nr)
+    pb = PtrView(out_perm_back, nr)
+    sc = PtrView(out_start_col_u, nr + 1)
+    lc = PtrView(out_len_col_u, nr)
+    ir = PtrView(out_idx_row_u, nz)
+    eu = PtrView(out_el_u, nz)
+    @inbounds for i in 1:nr
+        pr[i] = lu.pivot_region[i]
+        pb[i] = lu.permute_back[i] - Int32(1)
+        sc[i] = lu.start_col_u[i] - Int32(1)
+        lc[i] = lu.len_col_u[i]
+    end
+    @inbounds for k in 1:nz
+        ir[k] = lu.index_row_u[k] - Int32(1)
+        eu[k] = lu.element_u[k]
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_lu_btran(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_nnz::Cint,
+    w_cap::Cint,
+    w_packed::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+    collect_stats::Cint,
+    zero_tol::Cdouble,
+)::Cint
+    lu = _lu_get(Int32(id))
+    lu.collect_statistics = collect_stats != Cint(0)
+    lu.zero_tol = Float64(zero_tol)
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    wn = Int(w_nnz)
+    rn = Int(r_nnz)
+    if wn > 0 && w_packed == Cint(0)
+        shift_to_1based!(wi, wn)
+    end
+    shift_to_1based!(ri, rn)
+    nnz_out = btran!(lu, wv, wi, wn, w_packed != Cint(0), rv, ri, rn, r_packed != Cint(0))
+    shift_to_0based!(ri, nnz_out)
+    return Cint(nnz_out)
+end
+
+Base.@ccallable function jclp_lu_ftran(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_nnz::Cint,
+    w_cap::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+    no_permute::Cint,
+    collect_stats::Cint,
+    zero_tol::Cdouble,
+)::Cint
+    lu = _lu_get(Int32(id))
+    lu.collect_statistics = collect_stats != Cint(0)
+    lu.zero_tol = Float64(zero_tol)
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    np = no_permute != Cint(0)
+    wn = Int(w_nnz)
+    rn = Int(r_nnz)
+    if np
+        shift_to_1based!(wi, wn)
+    else
+        shift_to_1based!(ri, rn)
+    end
+    nnz_out = ftran!(lu, wv, wi, wn, rv, ri, rn, r_packed != Cint(0); no_permute = np)
+    if np
+        shift_to_0based!(wi, nnz_out)
+    else
+        shift_to_0based!(ri, nnz_out)
+    end
+    return Cint(nnz_out)
+end
+
+Base.@ccallable function jclp_lu_ftran_ft(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_cap::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+    collect_stats::Cint,
+    zero_tol::Cdouble,
+    out_u_state::Ptr{Cint},
+)::Cint
+    lu = _lu_get(Int32(id))
+    lu.collect_statistics = collect_stats != Cint(0)
+    lu.zero_tol = Float64(zero_tol)
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    rn = Int(r_nnz)
+    shift_to_1based!(ri, rn)
+    res = ftran_ft!(lu, wv, wi, rv, ri, rn, r_packed != Cint(0))
+    shift_to_0based!(ri, abs(res))
+    if out_u_state != C_NULL
+        st = PtrView(out_u_state, 2)
+        @inbounds begin
+            st[1] = lu.start_col_u[lu.max_cols_extra + 1] - Int32(1)
+            st[2] = lu.len_col_u[lu.ncols_extra + 1]
+        end
+    end
+    return Cint(res)
+end
+
+Base.@ccallable function jclp_lu_ftran_two_ft(
+    id::Cint,
+    r1_el::Ptr{Cdouble},
+    r1_idx::Ptr{Cint},
+    r1_cap::Cint,
+    r2_el::Ptr{Cdouble},
+    r2_idx::Ptr{Cint},
+    r2_nnz::Cint,
+    r2_cap::Cint,
+    r2_packed::Cint,
+    r3_el::Ptr{Cdouble},
+    r3_idx::Ptr{Cint},
+    r3_nnz::Cint,
+    r3_cap::Cint,
+    r3_packed::Cint,
+    no_permute_r3::Cint,
+    collect_stats::Cint,
+    zero_tol::Cdouble,
+    out_meta::Ptr{Cint},
+)::Cint
+    lu = _lu_get(Int32(id))
+    lu.collect_statistics = collect_stats != Cint(0)
+    lu.zero_tol = Float64(zero_tol)
+    v1 = PtrView(r1_el, Int(r1_cap))
+    i1 = PtrView(r1_idx, Int(r1_cap))
+    v2 = PtrView(r2_el, Int(r2_cap))
+    i2 = PtrView(r2_idx, Int(r2_cap))
+    v3 = PtrView(r3_el, Int(r3_cap))
+    i3 = PtrView(r3_idx, Int(r3_cap))
+    n2 = Int(r2_nnz)
+    n3 = Int(r3_nnz)
+    shift_to_1based!(i2, n2)
+    shift_to_1based!(i3, n3)
+    out2, out3 = ftran_two_ft!(
+        lu, v1, i1, v2, i2, n2, r2_packed != Cint(0),
+        v3, i3, n3, r3_packed != Cint(0);
+        no_permute_r3 = no_permute_r3 != Cint(0),
+    )
+    shift_to_0based!(i2, abs(out2))
+    shift_to_0based!(i3, out3)
+    st = PtrView(out_meta, 3)
+    @inbounds begin
+        st[1] = Int32(out3)
+        st[2] = lu.start_col_u[lu.max_cols_extra + 1] - Int32(1)
+        st[3] = lu.len_col_u[lu.ncols_extra + 1]
+    end
+    return Cint(out2)
+end
+
+Base.@ccallable function jclp_lu_replace_column(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_cap::Cint,
+    pivot_row_0based::Cint,
+    pivot_check::Cdouble,
+    check_before::Cint,
+    relax_check::Cdouble,
+    zero_tol::Cdouble,
+    out_meta_i32::Ptr{Cint},
+)::Cint
+    lu = _lu_get(Int32(id))
+    lu.relax_check = Float64(relax_check)
+    lu.zero_tol = Float64(zero_tol)
+    ret = replace_column!(
+        lu,
+        PtrView(w_el, Int(w_cap)),
+        PtrView(w_idx, Int(w_cap)),
+        Int(pivot_row_0based) + 1,
+        Float64(pivot_check),
+        check_before != Cint(0),
+    )
+    if out_meta_i32 != C_NULL
+        meta = PtrView(out_meta_i32, 11)
+        @inbounds begin
+            meta[1]  = Int32(lu.nrows_extra)
+            meta[2]  = Int32(lu.ncols_extra)
+            meta[3]  = Int32(lu.nu)
+            meta[4]  = Int32(lu.ngood_u)
+            meta[5]  = Int32(lu.npivots)
+            meta[6]  = Int32(lu.nr)
+            meta[7]  = Int32(lu.len_r)
+            meta[8]  = Int32(lu.len_u)
+            meta[9]  = Int32(lu.total_elements)
+            meta[10] = Int32(lu.ncompressions)
+            meta[11] = Int32(lu.status)
+        end
+    end
+    return Cint(ret)
+end
+
+Base.@ccallable function jclp_lu_replace_column_pfi(
+    id::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+    pivot_row_0based::Cint,
+    alpha::Cdouble,
+    out_npivots::Ptr{Cint},
+    out_total_el::Ptr{Cint},
+)::Cint
+    lu = _lu_get(Int32(id))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    rn = Int(r_nnz)
+    shift_to_1based!(ri, rn)
+    ret = replace_column_pfi!(lu, rv, ri, rn, r_packed != Cint(0), Int(pivot_row_0based) + 1, Float64(alpha))
+    shift_to_0based!(ri, rn)
+    if out_npivots != C_NULL
+        unsafe_store!(out_npivots, Cint(lu.npivots))
+    end
+    if out_total_el != C_NULL
+        unsafe_store!(out_total_el, Cint(lu.total_elements))
+    end
+    return Cint(ret)
+end

@@ -20,7 +20,12 @@ include("coinutils/CoinPresolveMedium.jl")
 include("coinutils/CoinPresolveAdvanced1.jl")
 include("coinutils/CoinPresolveAdvanced2.jl")
 
+# Pure Idiomatic 1-based Julia Core (zero Ptr / unsafe_load / PodView)
+include("coinutils/SparseLU/SparseLU.jl")
+
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
+include("bridge/PtrView.jl")
+include("bridge/handles.jl")
 include("bridge/capi.jl")
 
 end # module
