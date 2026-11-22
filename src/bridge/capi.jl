@@ -4467,3 +4467,476 @@ Base.@ccallable function jclp_dual_flip_bounds(
     )
     return nothing
 end
+
+# ==============================================================================
+# Phase B — B11a-2a: Remaining ClpSimplexDual pure algorithmic & helper kernels
+# ==============================================================================
+
+Base.@ccallable function jclp_dual_next_super_basic(
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    dual_tol::Cdouble,
+    io_first_free_0based::Ptr{Cint},
+)::Cint
+    ff0 = Int(unsafe_load(io_first_free_0based))
+    ff0 < 0 && return Cint(-1)
+    nt = Int(ntotal)
+    ret1, next_ff1 = clp_dual_next_super_basic!(
+        PtrView(dj, nt),
+        PtrView(status, nt),
+        nt,
+        ff0 + 1,
+        Float64(dual_tol),
+    )
+    unsafe_store!(io_first_free_0based, Cint(next_ff1 > 0 ? (next_ff1 - 1) : -1))
+    return Cint(ret1 > 0 ? (ret1 - 1) : -1)
+end
+
+Base.@ccallable function jclp_dual_row_finish(
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    pivot_row_0based::Cint,
+    already_chosen::Cint,
+    out_val_out::Ptr{Cdouble},
+    out_lo_out::Ptr{Cdouble},
+    out_hi_out::Ptr{Cdouble},
+    out_dir_out::Ptr{Cint},
+    out_dual_out::Ptr{Cdouble},
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    pr0 = Int(pivot_row_0based)
+    pr1 = pr0 >= 0 ? (pr0 + 1) : 0
+    seq1, val_out, lo_out, hi_out, dir_out, dual_out = clp_dual_row_finish!(
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(dj, nt),
+        pr1,
+        already_chosen != Cint(0),
+    )
+    unsafe_store!(out_val_out, val_out)
+    unsafe_store!(out_lo_out, lo_out)
+    unsafe_store!(out_hi_out, hi_out)
+    unsafe_store!(out_dir_out, Cint(dir_out))
+    unsafe_store!(out_dual_out, dual_out)
+    return Cint(seq1 > 0 ? (seq1 - 1) : -1)
+end
+
+Base.@ccallable function jclp_dual_check_fake_bounds(
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+)::Cint
+    nt = Int(ntotal)
+    return Cint(clp_dual_check_fake_bounds(PtrView(status, nt), nt))
+end
+
+Base.@ccallable function jclp_dual_number_at_fake_bound(
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+)::Cint
+    nt = Int(ntotal)
+    return Cint(clp_dual_number_at_fake_bound(PtrView(status, nt), nt))
+end
+
+Base.@ccallable function jclp_dual_original_bound(
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    col_lower::Ptr{Cdouble},
+    col_upper::Ptr{Cdouble},
+    row_lower::Ptr{Cdouble},
+    row_upper::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    ntotal::Cint,
+    rhs_scale::Cdouble,
+    seq_0based::Cint,
+    io_number_fake::Ptr{Cint},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = Int(ntotal)
+    lo = PtrView(lower, nt)
+    hi = PtrView(upper, nt)
+    st = PtrView(status, nt)
+    cl = PtrView(col_lower, nc)
+    cu = PtrView(col_upper, nc)
+    rl = PtrView(row_lower, nr)
+    ru = PtrView(row_upper, nr)
+    seq1 = Int(seq_0based) + 1
+    nfake0 = Int(unsafe_load(io_number_fake))
+    if row_scale != C_NULL
+        nfake1 = clp_dual_original_bound!(
+            lo, hi, st, cl, cu, rl, ru,
+            PtrView(row_scale, nr), PtrView(inv_col_scale, nc),
+            nc, Float64(rhs_scale), seq1, nfake0,
+        )
+    else
+        nfake1 = clp_dual_original_bound!(
+            lo, hi, st, cl, cu, rl, ru,
+            nothing, nothing,
+            nc, Float64(rhs_scale), seq1, nfake0,
+        )
+    end
+    unsafe_store!(io_number_fake, Cint(nfake1))
+    return nothing
+end
+
+Base.@ccallable function jclp_dual_change_bound(
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    solution::Ptr{Cdouble},
+    col_lower::Ptr{Cdouble},
+    col_upper::Ptr{Cdouble},
+    row_lower::Ptr{Cdouble},
+    row_upper::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    ntotal::Cint,
+    rhs_scale::Cdouble,
+    dual_bound::Cdouble,
+    seq_0based::Cint,
+    io_number_fake::Ptr{Cint},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = Int(ntotal)
+    lo = PtrView(lower, nt)
+    hi = PtrView(upper, nt)
+    st = PtrView(status, nt)
+    sol = PtrView(solution, nt)
+    cl = PtrView(col_lower, nc)
+    cu = PtrView(col_upper, nc)
+    rl = PtrView(row_lower, nr)
+    ru = PtrView(row_upper, nr)
+    seq1 = Int(seq_0based) + 1
+    nfake0 = Int(unsafe_load(io_number_fake))
+    if row_scale != C_NULL
+        modified, nfake1 = clp_dual_change_bound!(
+            lo, hi, st, sol, cl, cu, rl, ru,
+            PtrView(row_scale, nr), PtrView(inv_col_scale, nc),
+            nc, Float64(rhs_scale), Float64(dual_bound), seq1, nfake0,
+        )
+    else
+        modified, nfake1 = clp_dual_change_bound!(
+            lo, hi, st, sol, cl, cu, rl, ru,
+            nothing, nothing,
+            nc, Float64(rhs_scale), Float64(dual_bound), seq1, nfake0,
+        )
+    end
+    unsafe_store!(io_number_fake, Cint(nfake1))
+    return Cint(modified ? 1 : 0)
+end
+
+Base.@ccallable function jclp_dual_change_bounds(
+    initialize::Cint,
+    out_val::Ptr{Cdouble},
+    out_idx::Ptr{Cint},
+    io_out_nnz::Ptr{Cint},
+    out_cap::Cint,
+    mat_starts::Ptr{Cint},
+    mat_lengths::Ptr{Cint},
+    mat_indices::Ptr{Cint},
+    mat_elements::Ptr{Cdouble},
+    mat_nnz_cap::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    col_lower::Ptr{Cdouble},
+    col_upper::Ptr{Cdouble},
+    row_lower::Ptr{Cdouble},
+    row_upper::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    primal_tol::Cdouble,
+    io_dual_bound::Ptr{Cdouble},
+    large_value::Cdouble,
+    rhs_scale::Cdouble,
+    io_more_special_options::Ptr{Cint},
+    io_problem_status::Ptr{Cint},
+    io_change_cost::Ptr{Cdouble},
+    out_number_fake::Ptr{Cint},
+    out_emit_checkb::Ptr{Cint},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    sol = PtrView(solution, nt)
+    lo = PtrView(lower, nt)
+    hi = PtrView(upper, nt)
+    st = PtrView(status, nt)
+    cl = PtrView(col_lower, nc)
+    cu = PtrView(col_upper, nc)
+    rl = PtrView(row_lower, nr)
+    ru = PtrView(row_upper, nr)
+    db0 = Float64(unsafe_load(io_dual_bound))
+    mso0 = Int(unsafe_load(io_more_special_options))
+    pstat0 = Int(unsafe_load(io_problem_status))
+    cc0 = Float64(unsafe_load(io_change_cost))
+
+    if initialize == Cint(0)
+        nz = Int(mat_nnz_cap)
+        ms = ShiftedPtrView(mat_starts, nc + 1)
+        ml = PtrView(mat_lengths, nc)
+        mi = ShiftedPtrView(mat_indices, nz)
+        me = PtrView(mat_elements, nz)
+        djv = PtrView(dj, nt)
+        cov = PtrView(cost, nt)
+        ptol = Float64(primal_tol)
+        if out_val != C_NULL
+            oc = Int(out_cap)
+            ov = PtrView(out_val, oc)
+            oi = ShiftedPtrView(out_idx, oc)
+            onnz0 = Int(unsafe_load(io_out_nnz))
+            if row_scale != C_NULL
+                ret, onnz1, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_mode0!(
+                    ov, oi, onnz0, ms, ml, mi, me,
+                    PtrView(row_scale, nr), PtrView(col_scale, nc),
+                    djv, cov, sol, lo, hi, st, nr, nc, ptol, db0, mso0, pstat0,
+                )
+            else
+                ret, onnz1, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_mode0!(
+                    ov, oi, onnz0, ms, ml, mi, me,
+                    nothing, nothing,
+                    djv, cov, sol, lo, hi, st, nr, nc, ptol, db0, mso0, pstat0,
+                )
+            end
+            unsafe_store!(io_out_nnz, Cint(onnz1))
+        else
+            if row_scale != C_NULL
+                ret, _, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_mode0!(
+                    nothing, nothing, 0, ms, ml, mi, me,
+                    PtrView(row_scale, nr), PtrView(col_scale, nc),
+                    djv, cov, sol, lo, hi, st, nr, nc, ptol, db0, mso0, pstat0,
+                )
+            else
+                ret, _, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_mode0!(
+                    nothing, nothing, 0, ms, ml, mi, me,
+                    nothing, nothing,
+                    djv, cov, sol, lo, hi, st, nr, nc, ptol, db0, mso0, pstat0,
+                )
+            end
+        end
+    elseif initialize == Cint(1) || initialize == Cint(3)
+        init = Int(initialize)
+        lval = Float64(large_value)
+        rscale = Float64(rhs_scale)
+        if row_scale != C_NULL
+            ret, _, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_init13!(
+                init, PtrView(row_scale, nr), PtrView(inv_col_scale, nc),
+                sol, lo, hi, st, cl, cu, rl, ru,
+                nr, nc, db0, lval, rscale, mso0, pstat0, cc0,
+            )
+        else
+            ret, _, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_init13!(
+                init, nothing, nothing,
+                sol, lo, hi, st, cl, cu, rl, ru,
+                nr, nc, db0, lval, rscale, mso0, pstat0, cc0,
+            )
+        end
+    else
+        rscale = Float64(rhs_scale)
+        if row_scale != C_NULL
+            ret, _, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_mode2!(
+                PtrView(row_scale, nr), PtrView(inv_col_scale, nc),
+                lo, hi, st, cl, cu, rl, ru,
+                nr, nc, db0, rscale, mso0, pstat0, cc0,
+            )
+        else
+            ret, _, cc1, db1, nfake1, mso1, pstat1, emit1 = _dual_change_bounds_mode2!(
+                nothing, nothing,
+                lo, hi, st, cl, cu, rl, ru,
+                nr, nc, db0, rscale, mso0, pstat0, cc0,
+            )
+        end
+    end
+
+    unsafe_store!(io_change_cost, cc1)
+    unsafe_store!(io_dual_bound, db1)
+    unsafe_store!(out_number_fake, Cint(nfake1))
+    unsafe_store!(io_more_special_options, Cint(mso1))
+    unsafe_store!(io_problem_status, Cint(pstat1))
+    unsafe_store!(out_emit_checkb, Cint(emit1 ? 1 : 0))
+    return Cint(ret)
+end
+
+Base.@ccallable function jclp_dual_reset_fake_bounds(
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    solution::Ptr{Cdouble},
+    col_lower::Ptr{Cdouble},
+    col_upper::Ptr{Cdouble},
+    row_lower::Ptr{Cdouble},
+    row_upper::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    rhs_scale::Cdouble,
+    dual_bound::Cdouble,
+    out_bad_seq_0based::Ptr{Cint},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    lo = PtrView(lower, nt)
+    hi = PtrView(upper, nt)
+    st = PtrView(status, nt)
+    sol = PtrView(solution, nt)
+    cl = PtrView(col_lower, nc)
+    cu = PtrView(col_upper, nc)
+    rl = PtrView(row_lower, nr)
+    ru = PtrView(row_upper, nr)
+    if row_scale != C_NULL
+        nfake, bad_seq1 = clp_dual_reset_fake_bounds!(
+            lo, hi, st, sol, cl, cu, rl, ru,
+            PtrView(row_scale, nr), PtrView(inv_col_scale, nc),
+            nr, nc, Float64(rhs_scale), Float64(dual_bound),
+        )
+    else
+        nfake, bad_seq1 = clp_dual_reset_fake_bounds!(
+            lo, hi, st, sol, cl, cu, rl, ru,
+            nothing, nothing,
+            nr, nc, Float64(rhs_scale), Float64(dual_bound),
+        )
+    end
+    unsafe_store!(out_bad_seq_0based, Cint(bad_seq1 > 0 ? (bad_seq1 - 1) : -1))
+    return Cint(nfake)
+end
+
+Base.@ccallable function jclp_dual_check_possible_values_move(
+    row_val::Ptr{Cdouble},
+    row_idx::Ptr{Cint},
+    row_nnz::Cint,
+    row_cap::Cint,
+    col_val::Ptr{Cdouble},
+    col_idx::Ptr{Cint},
+    col_nnz::Cint,
+    col_cap::Cint,
+    dj::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ncols::Cint,
+    seq_out_0based::Cint,
+    dual_tol::Cdouble,
+    acceptable_pivot::Cdouble,
+    out_dir_in::Ptr{Cint},
+    out_theta::Ptr{Cdouble},
+    out_alpha::Ptr{Cdouble},
+    out_lower_in::Ptr{Cdouble},
+    out_upper_in::Ptr{Cdouble},
+    out_value_in::Ptr{Cdouble},
+    out_dual_in::Ptr{Cdouble},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    rc = Int(row_cap)
+    cc = Int(col_cap)
+    seq_out1 = Int(seq_out_0based) >= 0 ? (Int(seq_out_0based) + 1) : 0
+    seq_in1, dir_in, th, al, lo_in, up_in, val_in, dj_in = clp_dual_check_possible_values_move!(
+        PtrView(row_val, rc),
+        ShiftedPtrView(row_idx, rc),
+        Int(row_nnz),
+        PtrView(col_val, cc),
+        ShiftedPtrView(col_idx, cc),
+        Int(col_nnz),
+        PtrView(dj, nt),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(status, nt),
+        nc,
+        seq_out1,
+        Float64(dual_tol),
+        Float64(acceptable_pivot),
+    )
+    unsafe_store!(out_dir_in, Cint(dir_in))
+    unsafe_store!(out_theta, th)
+    unsafe_store!(out_alpha, al)
+    unsafe_store!(out_lower_in, lo_in)
+    unsafe_store!(out_upper_in, up_in)
+    unsafe_store!(out_value_in, val_in)
+    unsafe_store!(out_dual_in, dj_in)
+    return Cint(seq_in1 > 0 ? (seq_in1 - 1) : -1)
+end
+
+Base.@ccallable function jclp_dual_check_possible_cleanup(
+    row_val::Ptr{Cdouble},
+    row_idx::Ptr{Cint},
+    row_nnz::Cint,
+    row_cap::Cint,
+    col_val::Ptr{Cdouble},
+    col_idx::Ptr{Cint},
+    col_nnz::Cint,
+    col_cap::Cint,
+    dj::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ncols::Cint,
+    acceptable_pivot::Cdouble,
+    dual_tol::Cdouble,
+    out_dir_in::Ptr{Cint},
+    out_theta::Ptr{Cdouble},
+    out_alpha::Ptr{Cdouble},
+    out_lower_in::Ptr{Cdouble},
+    out_upper_in::Ptr{Cdouble},
+    out_value_in::Ptr{Cdouble},
+    out_dual_in::Ptr{Cdouble},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    rc = Int(row_cap)
+    cc = Int(col_cap)
+    seq_in1, dir_in, th, al, lo_in, up_in, val_in, dj_in = clp_dual_check_possible_cleanup!(
+        PtrView(row_val, rc),
+        ShiftedPtrView(row_idx, rc),
+        Int(row_nnz),
+        PtrView(col_val, cc),
+        ShiftedPtrView(col_idx, cc),
+        Int(col_nnz),
+        PtrView(dj, nt),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(status, nt),
+        nc,
+        Float64(acceptable_pivot),
+        Float64(dual_tol),
+    )
+    unsafe_store!(out_dir_in, Cint(dir_in))
+    unsafe_store!(out_theta, th)
+    unsafe_store!(out_alpha, al)
+    unsafe_store!(out_lower_in, lo_in)
+    unsafe_store!(out_upper_in, up_in)
+    unsafe_store!(out_value_in, val_in)
+    unsafe_store!(out_dual_in, dj_in)
+    return Cint(seq_in1 > 0 ? (seq_in1 - 1) : -1)
+end

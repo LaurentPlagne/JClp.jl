@@ -1339,3 +1339,1289 @@ function clp_update_duals_in_dual!(
         return (total_infeas, 0, 0, out_nnz, change_obj, number_fake)
     end
 end
+
+# ==============================================================================
+# 6. ClpSimplexDual::nextSuperBasic
+# ==============================================================================
+
+"""
+    clp_dual_next_super_basic!(dj, status, ntotal, first_free, dual_tol)
+        -> (next_free, updated_first_free)
+
+Advances `first_free` to the next non-zero-dual free variable (`ClpSimplexDual::nextSuperBasic`).
+All indices are 1-based (`0` denotes `-1` / none).
+"""
+function clp_dual_next_super_basic!(
+    dj::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    ntotal::Int,
+    first_free::Int,
+    dual_tol::Float64,
+)::Tuple{Int,Int}
+    if first_free > 0
+        ret = first_free
+        thresh = 1.0e2 * dual_tol
+        next_free = 0
+        @inbounds for icol in (first_free + 1):ntotal
+            if _sd_get_status(status[icol]) == CLP_STATUS_IS_FREE
+                if abs(dj[icol]) > thresh
+                    next_free = icol
+                    break
+                end
+            end
+        end
+        return (ret, next_free)
+    else
+        return (0, first_free)
+    end
+end
+
+# ==============================================================================
+# 7. ClpSimplexDual::dualRow tail
+# ==============================================================================
+
+"""
+    clp_dual_row_finish!(pivot_variable, solution, lower, upper, dj,
+                         pivot_row, already_chosen)
+        -> (sequence_out, value_out, lower_out, upper_out, direction_out, dual_out)
+
+Computes outgoing variable attributes from `pivot_row` (`ClpSimplexDual::dualRow` tail).
+`pivot_row` and returned `sequence_out` are 1-based (`0` denotes `-1`).
+"""
+function clp_dual_row_finish!(
+    pivot_variable::AbstractVector{Int32},
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    dj::AbstractVector{Float64},
+    pivot_row::Int,
+    already_chosen::Bool,
+)::Tuple{Int,Float64,Float64,Float64,Int,Float64}
+    pivot_row <= 0 && return (0, 0.0, 0.0, 0.0, 0, 0.0)
+    @inbounds begin
+        seq_out = Int(pivot_variable[pivot_row])
+        val_out = solution[seq_out]
+        lo_out = lower[seq_out]
+        hi_out = upper[seq_out]
+        if !already_chosen
+            if val_out > hi_out
+                dir_out = -1
+                dual_out = val_out - hi_out
+            elseif val_out < lo_out
+                dir_out = 1
+                dual_out = lo_out - val_out
+            else
+                if (val_out - lo_out) < (hi_out - val_out)
+                    dir_out = 1
+                    dual_out = lo_out - val_out
+                else
+                    dir_out = -1
+                    dual_out = val_out - hi_out
+                end
+            end
+        else
+            dual_out = 1.0e-6
+            dir_out = dj[seq_out] > 0.0 ? 1 : -1
+        end
+    end
+    return (seq_out, val_out, lo_out, hi_out, dir_out, dual_out)
+end
+
+# ==============================================================================
+# 8. ClpSimplexDual::checkFakeBounds & numberAtFakeBound
+# ==============================================================================
+
+"""
+    clp_dual_check_fake_bounds(status, ntotal) -> Int
+
+Counts variables whose active bound is currently a fake bound (`ClpSimplexDual::checkFakeBounds`).
+"""
+function clp_dual_check_fake_bounds(
+    status::AbstractVector{UInt8},
+    ntotal::Int,
+)::Int
+    n_active = 0
+    @inbounds for iseq in 1:ntotal
+        st_byte = status[iseq]
+        st = _sd_get_status(st_byte)
+        if st == CLP_STATUS_AT_UPPER
+            if (_sd_get_fake_bound(st_byte) & CLP_FAKE_UPPER) != UInt8(0)
+                n_active += 1
+            end
+        elseif st == CLP_STATUS_AT_LOWER
+            if (_sd_get_fake_bound(st_byte) & CLP_FAKE_LOWER) != UInt8(0)
+                n_active += 1
+            end
+        end
+    end
+    return n_active
+end
+
+"""
+    clp_dual_number_at_fake_bound(status, ntotal) -> Int
+
+Counts non-basic variables sitting on an active fake bound (`ClpSimplexDual::numberAtFakeBound`).
+"""
+function clp_dual_number_at_fake_bound(
+    status::AbstractVector{UInt8},
+    ntotal::Int,
+)::Int
+    n_fake = 0
+    @inbounds for iseq in 1:ntotal
+        st_byte = status[iseq]
+        bound = _sd_get_fake_bound(st_byte)
+        st = _sd_get_status(st_byte)
+        if st == CLP_STATUS_AT_UPPER
+            if bound == CLP_FAKE_UPPER || bound == CLP_FAKE_BOTH
+                n_fake += 1
+            end
+        elseif st == CLP_STATUS_AT_LOWER
+            if bound == CLP_FAKE_LOWER || bound == CLP_FAKE_BOTH
+                n_fake += 1
+            end
+        end
+    end
+    return n_fake
+end
+
+# ==============================================================================
+# 9. ClpSimplexDual::originalBound & changeBound
+# ==============================================================================
+
+"""
+    clp_dual_original_bound!(lower, upper, status,
+                             col_lower, col_upper, row_lower, row_upper,
+                             row_scale, inv_col_scale,
+                             ncols, rhs_scale, iseq, number_fake) -> Int
+
+Restores original scaled working bounds for 1-based `iseq` (`ClpSimplexDual::originalBound`).
+Returns updated `number_fake`.
+"""
+function clp_dual_original_bound!(
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    col_lower::AbstractVector{Float64},
+    col_upper::AbstractVector{Float64},
+    row_lower::AbstractVector{Float64},
+    row_upper::AbstractVector{Float64},
+    row_scale::RS,
+    inv_col_scale::ICS,
+    ncols::Int,
+    rhs_scale::Float64,
+    iseq::Int,
+    number_fake::Int,
+)::Int where {
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    ICS<:Union{Nothing,AbstractVector{Float64}},
+}
+    @inbounds begin
+        st_byte = status[iseq]
+        if _sd_get_fake_bound(st_byte) != CLP_FAKE_NO
+            number_fake -= 1
+            status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_NO)
+            if iseq > ncols
+                irow = iseq - ncols
+                lo = row_lower[irow]
+                hi = row_upper[irow]
+                if row_scale !== nothing
+                    mult = row_scale[irow] * rhs_scale
+                    if lo > -1.0e50
+                        lo *= mult
+                    end
+                    if hi < 1.0e50
+                        hi *= mult
+                    end
+                elseif rhs_scale != 1.0
+                    if lo > -1.0e50
+                        lo *= rhs_scale
+                    end
+                    if hi < 1.0e50
+                        hi *= rhs_scale
+                    end
+                end
+                lower[iseq] = lo
+                upper[iseq] = hi
+            else
+                lo = col_lower[iseq]
+                hi = col_upper[iseq]
+                if row_scale !== nothing
+                    ics = inv_col_scale::AbstractVector{Float64}
+                    mult = (1.0 * ics[iseq]) * rhs_scale
+                    if lo > -1.0e50
+                        lo *= mult
+                    end
+                    if hi < 1.0e50
+                        hi *= mult
+                    end
+                elseif rhs_scale != 1.0
+                    if lo > -1.0e50
+                        lo *= rhs_scale
+                    end
+                    if hi < 1.0e50
+                        hi *= rhs_scale
+                    end
+                end
+                lower[iseq] = lo
+                upper[iseq] = hi
+            end
+        end
+    end
+    return number_fake
+end
+
+"""
+    clp_dual_change_bound!(lower, upper, status, solution,
+                           col_lower, col_upper, row_lower, row_upper,
+                           row_scale, inv_col_scale,
+                           ncols, rhs_scale, dual_bound, iseq, number_fake)
+        -> (modified, number_fake)
+
+Restores original bounds via `clp_dual_original_bound!` and applies a single-variable
+fake bound if warranted (`ClpSimplexDual::changeBound`).
+"""
+function clp_dual_change_bound!(
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    solution::AbstractVector{Float64},
+    col_lower::AbstractVector{Float64},
+    col_upper::AbstractVector{Float64},
+    row_lower::AbstractVector{Float64},
+    row_upper::AbstractVector{Float64},
+    row_scale::RS,
+    inv_col_scale::ICS,
+    ncols::Int,
+    rhs_scale::Float64,
+    dual_bound::Float64,
+    iseq::Int,
+    number_fake::Int,
+)::Tuple{Bool,Int} where {
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    ICS<:Union{Nothing,AbstractVector{Float64}},
+}
+    @inbounds begin
+        old_lower = lower[iseq]
+        old_upper = upper[iseq]
+        value = solution[iseq]
+        modified = false
+        number_fake = clp_dual_original_bound!(
+            lower, upper, status,
+            col_lower, col_upper, row_lower, row_upper,
+            row_scale, inv_col_scale,
+            ncols, rhs_scale, iseq, number_fake,
+        )
+        lower_value = lower[iseq]
+        upper_value = upper[iseq]
+        lower[iseq] = old_lower
+        upper[iseq] = old_upper
+        if value == old_lower
+            if upper_value > old_lower + dual_bound
+                upper[iseq] = old_lower + dual_bound
+                status[iseq] = _sd_set_fake_bound(status[iseq], CLP_FAKE_UPPER)
+                modified = true
+                number_fake += 1
+            end
+        elseif value == old_upper
+            if lower_value < old_upper - dual_bound
+                lower[iseq] = old_upper - dual_bound
+                status[iseq] = _sd_set_fake_bound(status[iseq], CLP_FAKE_LOWER)
+                modified = true
+                number_fake += 1
+            end
+        end
+    end
+    return (modified, number_fake)
+end
+
+# ==============================================================================
+# 10. ClpSimplexDual::changeBounds & resetFakeBounds
+# ==============================================================================
+
+@inline function _scaled_bound_pair(lo::Float64, hi::Float64, mult::Float64)::Tuple{Float64,Float64}
+    return (lo > -1.0e30 ? lo * mult : lo, hi < 1.0e30 ? hi * mult : hi)
+end
+
+function _dual_change_bounds_mode0!(
+    out_val::OV,
+    out_idx::OI,
+    out_nnz::Int,
+    mat_starts::AbstractVector{Int32},
+    mat_lengths::AbstractVector{Int32},
+    mat_indices::AbstractVector{Int32},
+    mat_elements::AbstractVector{Float64},
+    row_scale::RS,
+    col_scale::CS,
+    dj::AbstractVector{Float64},
+    cost::AbstractVector{Float64},
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    nrows::Int,
+    ncols::Int,
+    primal_tol::Float64,
+    dual_bound::Float64,
+    more_special_options::Int,
+    problem_status::Int,
+)::Tuple{Int,Int,Float64,Float64,Int,Int,Int,Bool} where {
+    OV<:Union{Nothing,AbstractVector{Float64}},
+    OI<:Union{Nothing,AbstractVector{Int32}},
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    CS<:Union{Nothing,AbstractVector{Float64}},
+}
+    ntotal = nrows + ncols
+    new_bound = 5.0 * dual_bound
+    number_infeas = 0
+    number_fake = 0
+    change_cost = 0.0
+
+    @inbounds for iseq in 1:ntotal
+        lo_val = lower[iseq]
+        hi_val = upper[iseq]
+        val = solution[iseq]
+        st_byte = _sd_set_fake_bound(status[iseq], CLP_FAKE_NO)
+        status[iseq] = st_byte
+        st = _sd_get_status(st_byte)
+        if st == CLP_STATUS_AT_UPPER
+            if abs(val - hi_val) > primal_tol
+                if abs(dj[iseq]) > 1.0e-9
+                    number_infeas += 1
+                else
+                    status[iseq] = _sd_set_status(st_byte, CLP_STATUS_SUPER_BASIC)
+                    more_special_options &= ~8
+                end
+            end
+        elseif st == CLP_STATUS_AT_LOWER
+            if abs(val - lo_val) > primal_tol
+                if abs(dj[iseq]) > 1.0e-9
+                    number_infeas += 1
+                else
+                    status[iseq] = _sd_set_status(st_byte, CLP_STATUS_SUPER_BASIC)
+                    more_special_options &= ~8
+                end
+            end
+        end
+    end
+
+    if number_infeas != 0
+        @inbounds for iseq in 1:ntotal
+            lo_val = lower[iseq]
+            hi_val = upper[iseq]
+            st_byte = status[iseq]
+            st = _sd_get_status(st_byte)
+            if st == CLP_STATUS_AT_UPPER || st == CLP_STATUS_AT_LOWER
+                val = solution[iseq]
+                if (val - lo_val) <= (hi_val - val)
+                    new_lo = max(lo_val, _sd_fmsub(0.666667, new_bound, val))
+                    new_hi = min(hi_val, new_lo + new_bound)
+                else
+                    new_hi = min(hi_val, _sd_fmadd(0.666667, new_bound, val))
+                    new_lo = max(lo_val, new_hi - new_bound)
+                end
+                if new_lo > lo_val
+                    if new_hi < hi_val
+                        status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_BOTH)
+                        if st == CLP_STATUS_AT_LOWER
+                            new_lo = val
+                            new_hi = min(hi_val, new_lo + new_bound)
+                        else
+                            new_hi = val
+                            new_lo = max(lo_val, new_hi - new_bound)
+                        end
+                        number_fake += 1
+                    else
+                        status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_LOWER)
+                        number_fake += 1
+                    end
+                elseif new_hi < hi_val
+                    status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_UPPER)
+                    number_fake += 1
+                end
+                lower[iseq] = new_lo
+                upper[iseq] = new_hi
+                new_sol = st == CLP_STATUS_AT_UPPER ? new_hi : new_lo
+                solution[iseq] = new_sol
+                movement = new_sol - val
+                if movement != 0.0 && out_val !== nothing
+                    ov = out_val::AbstractVector{Float64}
+                    oi = out_idx::AbstractVector{Int32}
+                    if iseq > ncols
+                        out_nnz = _quick_add!(oi, ov, out_nnz, iseq, -movement)
+                    else
+                        out_nnz = clp_mat_add_indexed!(
+                            mat_starts, mat_lengths, mat_indices, mat_elements,
+                            iseq, movement, row_scale, col_scale,
+                            oi, ov, out_nnz,
+                        )
+                    end
+                    change_cost = _sd_fmadd(movement, cost[iseq], change_cost)
+                end
+            end
+        end
+        return (number_infeas, out_nnz, change_cost, new_bound, number_fake, more_special_options, problem_status, true)
+    else
+        return (-1, out_nnz, 0.0, dual_bound, 0, more_special_options, problem_status, false)
+    end
+end
+
+function _dual_change_bounds_init13!(
+    initialize::Int,
+    row_scale::RS,
+    inv_col_scale::ICS,
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    col_lower::AbstractVector{Float64},
+    col_upper::AbstractVector{Float64},
+    row_lower::AbstractVector{Float64},
+    row_upper::AbstractVector{Float64},
+    nrows::Int,
+    ncols::Int,
+    dual_bound::Float64,
+    large_value::Float64,
+    rhs_scale::Float64,
+    more_special_options::Int,
+    problem_status::Int,
+    change_cost::Float64,
+)::Tuple{Int,Int,Float64,Float64,Int,Int,Int,Bool} where {
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    ICS<:Union{Nothing,AbstractVector{Float64}},
+}
+    ntotal = nrows + ncols
+    number_fake = 0
+
+    @inbounds if initialize == 3
+        if row_scale !== nothing
+            ics = inv_col_scale::AbstractVector{Float64}
+            for iseq in 1:ncols
+                st_byte = status[iseq]
+                if _sd_get_fake_bound(st_byte) != CLP_FAKE_NO
+                    mult = rhs_scale * ics[iseq]
+                    lo, hi = _scaled_bound_pair(col_lower[iseq], col_upper[iseq], mult)
+                    if lo > hi
+                        hi = lo
+                    end
+                    lower[iseq] = lo
+                    upper[iseq] = hi
+                    status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_NO)
+                end
+            end
+            for irow in 1:nrows
+                seq = irow + ncols
+                mult = rhs_scale * row_scale[irow]
+                lo, hi = _scaled_bound_pair(row_lower[irow], row_upper[irow], mult)
+                lower[seq] = lo
+                upper[seq] = hi
+                status[seq] = _sd_set_fake_bound(status[seq], CLP_FAKE_NO)
+            end
+        else
+            for iseq in 1:ncols
+                st_byte = status[iseq]
+                if _sd_get_fake_bound(st_byte) != CLP_FAKE_NO
+                    lo = col_lower[iseq]
+                    hi = col_upper[iseq]
+                    if lo > hi
+                        hi = lo
+                    end
+                    lower[iseq] = lo
+                    upper[iseq] = hi
+                    status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_NO)
+                end
+            end
+            for irow in 1:nrows
+                seq = irow + ncols
+                st_byte = status[seq]
+                if _sd_get_fake_bound(st_byte) != CLP_FAKE_NO
+                    lo = row_lower[irow]
+                    hi = row_upper[irow]
+                    if lo > hi
+                        hi = lo
+                    end
+                    lower[seq] = lo
+                    upper[seq] = hi
+                    status[seq] = _sd_set_fake_bound(st_byte, CLP_FAKE_NO)
+                end
+            end
+        end
+    end
+
+    test_bound = 0.999999 * dual_bound
+    half_dual = 0.5 * dual_bound
+    twice_dual = 2.0 * dual_bound
+
+    @inbounds for iseq in 1:ntotal
+        st_byte = status[iseq]
+        st = _sd_get_status(st_byte)
+        if st == CLP_STATUS_AT_UPPER || st == CLP_STATUS_AT_LOWER
+            lo_val = lower[iseq]
+            hi_val = upper[iseq]
+            val = solution[iseq]
+            if lo_val > hi_val
+                upper[iseq] = lo_val
+                problem_status = 1
+                continue
+            end
+            if lo_val > -large_value || hi_val < large_value
+                if abs(lo_val - val) <= abs(hi_val - val)
+                    if hi_val > lo_val + test_bound
+                        if _sd_get_fake_bound(st_byte) == CLP_FAKE_NO
+                            number_fake += 1
+                        end
+                        upper[iseq] = lo_val + dual_bound
+                        status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_UPPER)
+                    end
+                else
+                    if lo_val < hi_val - test_bound
+                        if _sd_get_fake_bound(st_byte) == CLP_FAKE_NO
+                            number_fake += 1
+                        end
+                        lower[iseq] = hi_val - dual_bound
+                        status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_LOWER)
+                    end
+                end
+                if st == CLP_STATUS_AT_UPPER
+                    solution[iseq] = upper[iseq]
+                else
+                    solution[iseq] = lower[iseq]
+                end
+            else
+                lower[iseq] = -half_dual
+                upper[iseq] = half_dual
+                st_byte = _sd_set_fake_bound(st_byte, CLP_FAKE_BOTH)
+                status[iseq] = _sd_set_status(st_byte, CLP_STATUS_AT_UPPER)
+                number_fake += 1
+                solution[iseq] = half_dual
+            end
+        elseif st == CLP_STATUS_BASIC
+            status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_NO)
+            gap = upper[iseq] - lower[iseq]
+            if gap > half_dual && gap < twice_dual
+                if iseq <= ncols
+                    if row_scale !== nothing
+                        ics = inv_col_scale::AbstractVector{Float64}
+                        mult = rhs_scale * ics[iseq]
+                        lo, hi = _scaled_bound_pair(col_lower[iseq], col_upper[iseq], mult)
+                        lower[iseq] = lo
+                        upper[iseq] = hi
+                    else
+                        lower[iseq] = col_lower[iseq]
+                        upper[iseq] = col_upper[iseq]
+                    end
+                else
+                    irow = iseq - ncols
+                    if row_scale !== nothing
+                        mult = rhs_scale * row_scale[irow]
+                        lo, hi = _scaled_bound_pair(row_lower[irow], row_upper[irow], mult)
+                        lower[iseq] = lo
+                        upper[iseq] = hi
+                    else
+                        lower[iseq] = row_lower[irow]
+                        upper[iseq] = row_upper[irow]
+                    end
+                end
+            end
+        end
+    end
+
+    return (1, 0, change_cost, dual_bound, number_fake, more_special_options, problem_status, false)
+end
+
+function _dual_change_bounds_mode2!(
+    row_scale::RS,
+    inv_col_scale::ICS,
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    col_lower::AbstractVector{Float64},
+    col_upper::AbstractVector{Float64},
+    row_lower::AbstractVector{Float64},
+    row_upper::AbstractVector{Float64},
+    nrows::Int,
+    ncols::Int,
+    dual_bound::Float64,
+    rhs_scale::Float64,
+    more_special_options::Int,
+    problem_status::Int,
+    change_cost::Float64,
+)::Tuple{Int,Int,Float64,Float64,Int,Int,Int,Bool} where {
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    ICS<:Union{Nothing,AbstractVector{Float64}},
+}
+    @inbounds if row_scale !== nothing
+        ics = inv_col_scale::AbstractVector{Float64}
+        for iseq in 1:ncols
+            fb = _sd_get_fake_bound(status[iseq])
+            if fb != CLP_FAKE_NO
+                if (fb & UInt8(1)) != UInt8(0)
+                    val = col_lower[iseq]
+                    if val > -1.0e30
+                        val *= rhs_scale * ics[iseq]
+                    end
+                    lower[iseq] = val
+                end
+                if (fb & UInt8(2)) != UInt8(0)
+                    val = col_upper[iseq]
+                    if val < 1.0e30
+                        val *= rhs_scale * ics[iseq]
+                    end
+                    upper[iseq] = val
+                end
+            end
+        end
+        for irow in 1:nrows
+            seq = irow + ncols
+            fb = _sd_get_fake_bound(status[seq])
+            if fb != CLP_FAKE_NO
+                if (fb & UInt8(1)) != UInt8(0)
+                    val = row_lower[irow]
+                    if val > -1.0e30
+                        val *= rhs_scale * row_scale[irow]
+                    end
+                    lower[seq] = val
+                end
+                if (fb & UInt8(2)) != UInt8(0)
+                    val = row_upper[irow]
+                    if val < 1.0e30
+                        val *= rhs_scale * row_scale[irow]
+                    end
+                    upper[seq] = val
+                end
+            end
+        end
+    else
+        for iseq in 1:ncols
+            fb = _sd_get_fake_bound(status[iseq])
+            if (fb & UInt8(1)) != UInt8(0)
+                lower[iseq] = col_lower[iseq]
+            end
+            if (fb & UInt8(2)) != UInt8(0)
+                upper[iseq] = col_upper[iseq]
+            end
+        end
+        for irow in 1:nrows
+            seq = irow + ncols
+            fb = _sd_get_fake_bound(status[seq])
+            if (fb & UInt8(1)) != UInt8(0)
+                lower[seq] = row_lower[irow]
+            end
+            if (fb & UInt8(2)) != UInt8(0)
+                upper[seq] = row_upper[irow]
+            end
+        end
+    end
+
+    return (0, 0, change_cost, dual_bound, 0, more_special_options, problem_status, false)
+end
+
+"""
+    clp_dual_change_bounds!(initialize, out_val, out_idx, out_nnz,
+                            mat_starts, mat_lengths, mat_indices, mat_elements,
+                            row_scale, col_scale, inv_col_scale,
+                            dj, cost, solution, lower, upper, status,
+                            col_lower, col_upper, row_lower, row_upper,
+                            nrows, ncols, primal_tol, dual_bound, large_value, rhs_scale,
+                            more_special_options, problem_status, change_cost)
+        -> (ret, out_nnz, change_cost, dual_bound, number_fake,
+            more_special_options, problem_status, emit_checkb)
+
+Manages dual fake bounds across all modes (`initialize == 0, 1, 2, 3`,
+`ClpSimplexDual::changeBounds`). Caller must invoke `createRim1(false)` before mode 0.
+"""
+function clp_dual_change_bounds!(
+    initialize::Int,
+    out_val::OV,
+    out_idx::OI,
+    out_nnz::Int,
+    mat_starts::MS,
+    mat_lengths::ML,
+    mat_indices::MI,
+    mat_elements::ME,
+    row_scale::RS,
+    col_scale::CS,
+    inv_col_scale::ICS,
+    dj::AbstractVector{Float64},
+    cost::AbstractVector{Float64},
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    col_lower::AbstractVector{Float64},
+    col_upper::AbstractVector{Float64},
+    row_lower::AbstractVector{Float64},
+    row_upper::AbstractVector{Float64},
+    nrows::Int,
+    ncols::Int,
+    primal_tol::Float64,
+    dual_bound::Float64,
+    large_value::Float64,
+    rhs_scale::Float64,
+    more_special_options::Int,
+    problem_status::Int,
+    change_cost::Float64,
+)::Tuple{Int,Int,Float64,Float64,Int,Int,Int,Bool} where {
+    OV<:Union{Nothing,AbstractVector{Float64}},
+    OI<:Union{Nothing,AbstractVector{Int32}},
+    MS<:Union{Nothing,AbstractVector{Int32}},
+    ML<:Union{Nothing,AbstractVector{Int32}},
+    MI<:Union{Nothing,AbstractVector{Int32}},
+    ME<:Union{Nothing,AbstractVector{Float64}},
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    CS<:Union{Nothing,AbstractVector{Float64}},
+    ICS<:Union{Nothing,AbstractVector{Float64}},
+}
+    if initialize == 0
+        return _dual_change_bounds_mode0!(
+            out_val, out_idx, out_nnz,
+            mat_starts::AbstractVector{Int32},
+            mat_lengths::AbstractVector{Int32},
+            mat_indices::AbstractVector{Int32},
+            mat_elements::AbstractVector{Float64},
+            row_scale, col_scale,
+            dj, cost, solution, lower, upper, status,
+            nrows, ncols, primal_tol, dual_bound,
+            more_special_options, problem_status,
+        )
+    elseif initialize == 1 || initialize == 3
+        return _dual_change_bounds_init13!(
+            initialize, row_scale, inv_col_scale,
+            solution, lower, upper, status,
+            col_lower, col_upper, row_lower, row_upper,
+            nrows, ncols, dual_bound, large_value, rhs_scale,
+            more_special_options, problem_status, change_cost,
+        )
+    else
+        return _dual_change_bounds_mode2!(
+            row_scale, inv_col_scale,
+            lower, upper, status,
+            col_lower, col_upper, row_lower, row_upper,
+            nrows, ncols, dual_bound, rhs_scale,
+            more_special_options, problem_status, change_cost,
+        )
+    end
+end
+
+"""
+    clp_dual_reset_fake_bounds!(lower, upper, status, solution,
+                                col_lower, col_upper, row_lower, row_upper,
+                                row_scale, inv_col_scale,
+                                nrows, ncols, rhs_scale, dual_bound)
+        -> (number_fake, bad_seq)
+
+Restores true bounds and reapplies active fake bounds using variable status
+(`ClpSimplexDual::resetFakeBounds` for `type > 0 && lower_`).
+`bad_seq` is 0 on success, or the 1-based sequence index of an invalid status.
+"""
+function clp_dual_reset_fake_bounds!(
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    solution::AbstractVector{Float64},
+    col_lower::AbstractVector{Float64},
+    col_upper::AbstractVector{Float64},
+    row_lower::AbstractVector{Float64},
+    row_upper::AbstractVector{Float64},
+    row_scale::RS,
+    inv_col_scale::ICS,
+    nrows::Int,
+    ncols::Int,
+    rhs_scale::Float64,
+    dual_bound::Float64,
+)::Tuple{Int,Int} where {
+    RS<:Union{Nothing,AbstractVector{Float64}},
+    ICS<:Union{Nothing,AbstractVector{Float64}},
+}
+    ntotal = nrows + ncols
+    @inbounds if row_scale !== nothing
+        ics = inv_col_scale::AbstractVector{Float64}
+        for iseq in 1:ncols
+            mult = rhs_scale * ics[iseq]
+            lo, hi = _scaled_bound_pair(col_lower[iseq], col_upper[iseq], mult)
+            lower[iseq] = lo
+            upper[iseq] = hi
+        end
+        for irow in 1:nrows
+            seq = irow + ncols
+            mult = rhs_scale * row_scale[irow]
+            lo, hi = _scaled_bound_pair(row_lower[irow], row_upper[irow], mult)
+            lower[seq] = lo
+            upper[seq] = hi
+        end
+    else
+        for iseq in 1:ncols
+            lower[iseq] = col_lower[iseq]
+            upper[iseq] = col_upper[iseq]
+        end
+        for irow in 1:nrows
+            seq = irow + ncols
+            lower[seq] = row_lower[irow]
+            upper[seq] = row_upper[irow]
+        end
+    end
+
+    number_fake = 0
+    half_dual = 0.5 * dual_bound
+    @inbounds for iseq in 1:ntotal
+        st_byte = status[iseq]
+        fb = _sd_get_fake_bound(st_byte)
+        if fb != CLP_FAKE_NO
+            st = _sd_get_status(st_byte)
+            if st == CLP_STATUS_BASIC || st == CLP_STATUS_IS_FIXED
+                status[iseq] = _sd_set_fake_bound(st_byte, CLP_FAKE_NO)
+                continue
+            end
+            lo_val = lower[iseq]
+            hi_val = upper[iseq]
+            val = solution[iseq]
+            number_fake += 1
+            if fb == CLP_FAKE_UPPER
+                new_hi = lo_val + dual_bound
+                upper[iseq] = new_hi
+                if st == CLP_STATUS_AT_LOWER
+                    solution[iseq] = lo_val
+                elseif st == CLP_STATUS_AT_UPPER
+                    solution[iseq] = new_hi
+                else
+                    return (number_fake, iseq)
+                end
+            elseif fb == CLP_FAKE_LOWER
+                new_lo = hi_val - dual_bound
+                lower[iseq] = new_lo
+                if st == CLP_STATUS_AT_LOWER
+                    solution[iseq] = new_lo
+                elseif st == CLP_STATUS_AT_UPPER
+                    solution[iseq] = hi_val
+                else
+                    return (number_fake, iseq)
+                end
+            else # CLP_FAKE_BOTH
+                if st == CLP_STATUS_AT_LOWER
+                    lower[iseq] = val
+                    upper[iseq] = val + dual_bound
+                elseif st == CLP_STATUS_AT_UPPER
+                    upper[iseq] = val
+                    lower[iseq] = val - dual_bound
+                elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+                    lower[iseq] = val - half_dual
+                    upper[iseq] = val + half_dual
+                else
+                    return (number_fake, iseq)
+                end
+            end
+        end
+    end
+    return (number_fake, 0)
+end
+
+# ==============================================================================
+# 11. ClpSimplexDual::checkPossibleValuesMove & checkPossibleCleanup
+# ==============================================================================
+
+@inline function _dual_possible_at_upper(
+    alpha::Float64,
+    old_val::Float64,
+    iseq2::Int,
+    acceptable_pivot::Float64,
+    tolerance::Float64,
+    theta_up::Float64,
+    best_alpha_up::Float64,
+    seq_up::Int,
+    alpha_up::Float64,
+    theta_down::Float64,
+    best_alpha_down::Float64,
+    seq_down::Int,
+    alpha_down::Float64,
+)::Tuple{Float64,Float64,Int,Float64,Float64,Float64,Int,Float64}
+    if alpha >= acceptable_pivot
+        value = _sd_fmadd(theta_up, alpha, old_val)
+        if value > -tolerance
+            abs_alpha = abs(alpha)
+            if value > tolerance || abs_alpha > best_alpha_up
+                theta_up = -old_val / alpha
+                best_alpha_up = abs_alpha
+                seq_up = iseq2
+                alpha_up = alpha
+            end
+        end
+    elseif alpha <= -acceptable_pivot
+        value = _sd_fmsub(theta_down, alpha, old_val)
+        if value > -tolerance
+            abs_alpha = abs(alpha)
+            if value > tolerance || abs_alpha > best_alpha_down
+                theta_down = old_val / alpha
+                best_alpha_down = abs_alpha
+                seq_down = iseq2
+                alpha_down = alpha
+            end
+        end
+    end
+    return (theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down)
+end
+
+@inline function _dual_possible_at_lower(
+    alpha::Float64,
+    old_val::Float64,
+    iseq2::Int,
+    acceptable_pivot::Float64,
+    tolerance::Float64,
+    theta_up::Float64,
+    best_alpha_up::Float64,
+    seq_up::Int,
+    alpha_up::Float64,
+    theta_down::Float64,
+    best_alpha_down::Float64,
+    seq_down::Int,
+    alpha_down::Float64,
+)::Tuple{Float64,Float64,Int,Float64,Float64,Float64,Int,Float64}
+    if alpha <= -acceptable_pivot
+        value = _sd_fmadd(theta_up, alpha, old_val)
+        if value < tolerance
+            abs_alpha = abs(alpha)
+            if value < -tolerance || abs_alpha > best_alpha_up
+                theta_up = -old_val / alpha
+                best_alpha_up = abs_alpha
+                seq_up = iseq2
+                alpha_up = alpha
+            end
+        end
+    elseif alpha >= acceptable_pivot
+        value = _sd_fmsub(theta_down, alpha, old_val)
+        if value < tolerance
+            abs_alpha = abs(alpha)
+            if value < -tolerance || abs_alpha > best_alpha_down
+                theta_down = old_val / alpha
+                best_alpha_down = abs_alpha
+                seq_down = iseq2
+                alpha_down = alpha
+            end
+        end
+    end
+    return (theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down)
+end
+
+@inline function _dual_possible_incoming_attrs(
+    seq_in::Int,
+    alpha::Float64,
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    solution::AbstractVector{Float64},
+    dj::AbstractVector{Float64},
+)::Tuple{Int,Float64,Float64,Float64,Float64}
+    seq_in <= 0 && return (0, 0.0, 0.0, 0.0, 0.0)
+    @inbounds begin
+        lo_in = lower[seq_in]
+        up_in = upper[seq_in]
+        val_in = solution[seq_in]
+        dj_in = dj[seq_in]
+    end
+    if alpha < 0.0
+        return (-1, lo_in, val_in, val_in, dj_in)
+    else
+        return (1, val_in, up_in, val_in, dj_in)
+    end
+end
+
+function _values_move_section(
+    work::AbstractVector{Float64},
+    which::AbstractVector{Int32},
+    number::Int,
+    add_seq::Int,
+    dj::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    acceptable_pivot::Float64,
+    tolerance::Float64,
+    change_down::Float64,
+    theta_up::Float64,
+    best_alpha_up::Float64,
+    seq_up::Int,
+    alpha_up::Float64,
+    theta_down::Float64,
+    best_alpha_down::Float64,
+    seq_down::Int,
+    alpha_down::Float64,
+)::Tuple{Float64,Float64,Float64,Int,Float64,Float64,Float64,Int,Float64}
+    @inbounds for i in 1:number
+        iseq2 = Int(which[i]) + add_seq
+        st = _sd_get_status(status[iseq2])
+        if st == CLP_STATUS_IS_FIXED
+            alpha = work[i]
+            change_down = _sd_fmadd(alpha, upper[iseq2], change_down)
+        elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+            alpha = work[i]
+            abs_alpha = abs(alpha)
+            if abs_alpha > best_alpha_up
+                theta_down = 0.0
+                theta_up = 0.0
+                best_alpha_down = abs_alpha
+                best_alpha_up = abs_alpha
+                seq_down = iseq2
+                seq_up = iseq2
+                alpha_up = alpha
+                alpha_down = alpha
+            end
+        elseif st == CLP_STATUS_AT_UPPER
+            alpha = work[i]
+            old_val = dj[iseq2]
+            change_down = _sd_fmadd(alpha, upper[iseq2], change_down)
+            theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+                _dual_possible_at_upper(
+                    alpha, old_val, iseq2, acceptable_pivot, tolerance,
+                    theta_up, best_alpha_up, seq_up, alpha_up,
+                    theta_down, best_alpha_down, seq_down, alpha_down,
+                )
+        elseif st == CLP_STATUS_AT_LOWER
+            alpha = work[i]
+            old_val = dj[iseq2]
+            change_down = _sd_fmadd(alpha, lower[iseq2], change_down)
+            theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+                _dual_possible_at_lower(
+                    alpha, old_val, iseq2, acceptable_pivot, tolerance,
+                    theta_up, best_alpha_up, seq_up, alpha_up,
+                    theta_down, best_alpha_down, seq_down, alpha_down,
+                )
+        end
+    end
+    return (change_down, theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down)
+end
+
+"""
+    clp_dual_check_possible_values_move!(row_val, row_idx, row_nnz,
+                                         col_val, col_idx, col_nnz,
+                                         dj, solution, lower, upper, status,
+                                         ncols, sequence_out, dual_tol, acceptable_pivot)
+        -> (sequence_in, direction_in, theta, alpha,
+            lower_in, upper_in, value_in, dual_in)
+
+Two-sided ratio test used during dual values pass (`ClpSimplexDual::checkPossibleValuesMove`).
+`sequence_out` and returned `sequence_in` are 1-based (`0` denotes `-1`).
+"""
+function clp_dual_check_possible_values_move!(
+    row_val::AbstractVector{Float64},
+    row_idx::AbstractVector{Int32},
+    row_nnz::Int,
+    col_val::AbstractVector{Float64},
+    col_idx::AbstractVector{Int32},
+    col_nnz::Int,
+    dj::AbstractVector{Float64},
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    ncols::Int,
+    sequence_out::Int,
+    dual_tol::Float64,
+    acceptable_pivot::Float64,
+)::Tuple{Int,Int,Float64,Float64,Float64,Float64,Float64,Float64}
+    tolerance = dual_tol * 1.001
+    theta_down = 1.0e31
+    best_alpha_down = acceptable_pivot * 0.99999
+    seq_down = 0
+    seq_up = sequence_out
+
+    @inbounds begin
+        dj_basic = dj[sequence_out]
+        if dj_basic > 0.0
+            theta_up = dj_basic
+            change_down = -lower[sequence_out]
+        else
+            theta_up = -dj_basic
+            change_down = upper[sequence_out]
+        end
+    end
+    best_alpha_up = 1.0
+    alpha_up = 0.0
+    alpha_down = 0.0
+
+    change_down, theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+        _values_move_section(
+            row_val, row_idx, row_nnz, ncols,
+            dj, lower, upper, status, acceptable_pivot, tolerance,
+            change_down, theta_up, best_alpha_up, seq_up, alpha_up,
+            theta_down, best_alpha_down, seq_down, alpha_down,
+        )
+    change_down, theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+        _values_move_section(
+            col_val, col_idx, col_nnz, 0,
+            dj, lower, upper, status, acceptable_pivot, tolerance,
+            change_down, theta_up, best_alpha_up, seq_up, alpha_up,
+            theta_down, best_alpha_down, seq_down, alpha_down,
+        )
+
+    theta_up *= -1.0
+    change_up = -theta_up * change_down
+    change_down = -theta_down * change_down
+    if max(abs(theta_down), abs(theta_up)) < 1.0e-8
+        if abs(alpha_down) < abs(alpha_up)
+            seq_down = 0
+        end
+    end
+
+    seq_in = 0
+    if change_down > change_up && seq_down > 0
+        theta = theta_down
+        if abs(change_down) < 1.0e30
+            seq_in = seq_down
+        end
+        alpha = alpha_down
+    else
+        theta = theta_up
+        if abs(change_up) < 1.0e30
+            seq_in = seq_up
+        end
+        alpha = alpha_up
+    end
+
+    dir_in, lo_in, up_in, val_in, dj_in = _dual_possible_incoming_attrs(
+        seq_in, alpha, lower, upper, solution, dj,
+    )
+    return (seq_in, dir_in, theta, alpha, lo_in, up_in, val_in, dj_in)
+end
+
+function _cleanup_section(
+    work::AbstractVector{Float64},
+    which::AbstractVector{Int32},
+    number::Int,
+    add_seq::Int,
+    dj::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    acceptable_pivot::Float64,
+    tolerance::Float64,
+    theta_up::Float64,
+    best_alpha_up::Float64,
+    seq_up::Int,
+    alpha_up::Float64,
+    theta_down::Float64,
+    best_alpha_down::Float64,
+    seq_down::Int,
+    alpha_down::Float64,
+)::Tuple{Float64,Float64,Int,Float64,Float64,Float64,Int,Float64}
+    @inbounds for i in 1:number
+        iseq2 = Int(which[i]) + add_seq
+        st = _sd_get_status(status[iseq2])
+        if st == CLP_STATUS_IS_FIXED
+            if add_seq != 0
+                alpha = work[i]
+                old_val = dj[iseq2]
+                theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+                    _dual_possible_at_lower(
+                        alpha, old_val, iseq2, acceptable_pivot, tolerance,
+                        theta_up, best_alpha_up, seq_up, alpha_up,
+                        theta_down, best_alpha_down, seq_down, alpha_down,
+                    )
+            end
+        elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+            alpha = work[i]
+            abs_alpha = abs(alpha)
+            if abs_alpha > best_alpha_up
+                theta_down = 0.0
+                theta_up = 0.0
+                best_alpha_down = abs_alpha
+                best_alpha_up = abs_alpha
+                seq_down = iseq2
+                seq_up = iseq2
+                alpha_up = alpha
+                alpha_down = alpha
+            end
+        elseif st == CLP_STATUS_AT_UPPER
+            alpha = work[i]
+            old_val = dj[iseq2]
+            theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+                _dual_possible_at_upper(
+                    alpha, old_val, iseq2, acceptable_pivot, tolerance,
+                    theta_up, best_alpha_up, seq_up, alpha_up,
+                    theta_down, best_alpha_down, seq_down, alpha_down,
+                )
+        elseif st == CLP_STATUS_AT_LOWER
+            alpha = work[i]
+            old_val = dj[iseq2]
+            theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+                _dual_possible_at_lower(
+                    alpha, old_val, iseq2, acceptable_pivot, tolerance,
+                    theta_up, best_alpha_up, seq_up, alpha_up,
+                    theta_down, best_alpha_down, seq_down, alpha_down,
+                )
+        end
+    end
+    return (theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down)
+end
+
+"""
+    clp_dual_check_possible_cleanup!(row_val, row_idx, row_nnz,
+                                     col_val, col_idx, col_nnz,
+                                     dj, solution, lower, upper, status,
+                                     ncols, acceptable_pivot, dual_tol)
+        -> (sequence_in, direction_in, theta, alpha,
+            lower_in, upper_in, value_in, dual_in)
+
+Two-sided ratio test used during branch-and-bound cleanup (`ClpSimplexDual::checkPossibleCleanup`).
+Returned `sequence_in` is 1-based (`0` denotes `-1`).
+"""
+function clp_dual_check_possible_cleanup!(
+    row_val::AbstractVector{Float64},
+    row_idx::AbstractVector{Int32},
+    row_nnz::Int,
+    col_val::AbstractVector{Float64},
+    col_idx::AbstractVector{Int32},
+    col_nnz::Int,
+    dj::AbstractVector{Float64},
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    ncols::Int,
+    acceptable_pivot::Float64,
+    dual_tol::Float64,
+)::Tuple{Int,Int,Float64,Float64,Float64,Float64,Float64,Float64}
+    tolerance = dual_tol * 1.001
+    theta_down = 1.0e31
+    theta_up = 1.0e31
+    best_alpha_down = acceptable_pivot * 10.0
+    best_alpha_up = acceptable_pivot * 10.0
+    seq_down = 0
+    seq_up = 0
+    alpha_up = 0.0
+    alpha_down = 0.0
+
+    theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+        _cleanup_section(
+            row_val, row_idx, row_nnz, ncols,
+            dj, status, acceptable_pivot, tolerance,
+            theta_up, best_alpha_up, seq_up, alpha_up,
+            theta_down, best_alpha_down, seq_down, alpha_down,
+        )
+    theta_up, best_alpha_up, seq_up, alpha_up, theta_down, best_alpha_down, seq_down, alpha_down =
+        _cleanup_section(
+            col_val, col_idx, col_nnz, 0,
+            dj, status, acceptable_pivot, tolerance,
+            theta_up, best_alpha_up, seq_up, alpha_up,
+            theta_down, best_alpha_down, seq_down, alpha_down,
+        )
+
+    theta_up *= -1.0
+    if best_alpha_down < best_alpha_up
+        seq_down = 0
+    else
+        seq_up = 0
+    end
+
+    seq_in = 0
+    theta = 0.0
+    alpha = 0.0
+    if seq_down > 0
+        theta = theta_down
+        seq_in = seq_down
+        alpha = alpha_down
+    elseif seq_up > 0
+        theta = theta_up
+        seq_in = seq_up
+        alpha = alpha_up
+    end
+
+    dir_in, lo_in, up_in, val_in, dj_in = _dual_possible_incoming_attrs(
+        seq_in, alpha, lower, upper, solution, dj,
+    )
+    return (seq_in, dir_in, theta, alpha, lo_in, up_in, val_in, dj_in)
+end
