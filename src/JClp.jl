@@ -25,6 +25,7 @@ include("coinutils/SparseLU/SparseLU.jl")
 include("clp/PackedMatrix.jl")
 include("clp/DualRowPivot.jl")
 include("clp/PrimalColumnPivot.jl")
+include("clp/NonLinearCost.jl")
 
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
 include("bridge/PtrView.jl")

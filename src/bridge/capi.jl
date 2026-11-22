@@ -3305,3 +3305,167 @@ Base.@ccallable function jclp_pcs_looks_optimal_simple(
     ok = clp_pcs_looks_optimal_simple(PtrView(rc, nt), PtrView(status, nt), nt, Float64(tol))
     return Cint(ok ? 1 : 0)
 end
+
+# ==============================================================================
+# Phase B — B9c: ClpNonLinearCost (@ccallable C ABI -> pure 1-based Julia)
+# ==============================================================================
+
+Base.@ccallable function jclp_nlc_feasible_bounds(
+    nlc_status::Ptr{Cuchar},
+    bound::Ptr{Cdouble},
+    cost2::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    ntotal::Cint,
+)::Cvoid
+    nt = Int(ntotal)
+    clp_nlc_feasible_bounds!(
+        PtrView(nlc_status, nt), PtrView(bound, nt), PtrView(cost2, nt),
+        PtrView(lower, nt), PtrView(upper, nt), PtrView(cost, nt), nt,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_nlc_go_back_all_m2(
+    nlc_status::Ptr{Cuchar},
+    pivot_var::Ptr{Cint},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    nrows::Cint,
+    ntotal::Cint,
+)::Cvoid
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    nu = Int(n_upd)
+    clp_nlc_go_back_all_m2!(
+        PtrView(nlc_status, nt), ShiftedPtrView(pivot_var, nr), ShiftedPtrView(upd_idx, nu), nu,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_nlc_check_infeas_subset_m2(
+    nlc_status::Ptr{Cuchar},
+    bound::Ptr{Cdouble},
+    cost2::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    row_idx::Ptr{Cint},
+    n_in_arr::Cint,
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    primal_tol::Cdouble,
+    infeas_weight::Cdouble,
+    n_infeas::Cint,
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    na = Int(n_in_arr)
+    return Cint(clp_nlc_check_infeas_subset_m2!(
+        PtrView(nlc_status, nt), PtrView(bound, nt), PtrView(cost2, nt),
+        ShiftedPtrView(pivot_var, nr), ShiftedPtrView(row_idx, na), na,
+        PtrView(solution, nt), PtrView(lower, nt), PtrView(upper, nt), PtrView(cost, nt),
+        Float64(primal_tol), Float64(infeas_weight), Int(n_infeas),
+    ))
+end
+
+Base.@ccallable function jclp_nlc_check_changed_m2(
+    nlc_status::Ptr{Cuchar},
+    bound::Ptr{Cdouble},
+    cost2::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    upd_idx::Ptr{Cint},
+    upd_work::Ptr{Cdouble},
+    upd_cap::Cint,
+    n_in_arr::Cint,
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    primal_tol::Cdouble,
+    infeas_weight::Cdouble,
+    io_n_infeas::Ptr{Cint},
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    uc = Int(upd_cap)
+    ninf0 = Int(unsafe_load(io_n_infeas))
+    nchg, ninf1 = clp_nlc_check_changed_m2!(
+        PtrView(nlc_status, nt), PtrView(bound, nt), PtrView(cost2, nt),
+        ShiftedPtrView(pivot_var, nr), ShiftedPtrView(upd_idx, uc), PtrView(upd_work, uc),
+        Int(n_in_arr),
+        PtrView(solution, nt), PtrView(lower, nt), PtrView(upper, nt), PtrView(cost, nt),
+        Float64(primal_tol), Float64(infeas_weight), ninf0,
+    )
+    unsafe_store!(io_n_infeas, Cint(ninf1))
+    return Cint(nchg)
+end
+
+Base.@ccallable function jclp_nlc_set_one_m2(
+    nlc_status::Ptr{Cuchar},
+    bound::Ptr{Cdouble},
+    cost2::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    model_status::Ptr{Cuchar},
+    ntotal::Cint,
+    iseq_0based::Cint,
+    val::Cdouble,
+    primal_tol::Cdouble,
+    infeas_weight::Cdouble,
+    io_n_infeas::Ptr{Cint},
+)::Cdouble
+    nt = Int(ntotal)
+    ninf0 = Int(unsafe_load(io_n_infeas))
+    diff, ninf1 = clp_nlc_set_one_m2!(
+        PtrView(nlc_status, nt), PtrView(bound, nt), PtrView(cost2, nt),
+        PtrView(lower, nt), PtrView(upper, nt), PtrView(cost, nt), PtrView(model_status, nt),
+        Int(iseq_0based) + 1, Float64(val), Float64(primal_tol), Float64(infeas_weight), ninf0,
+    )
+    unsafe_store!(io_n_infeas, Cint(ninf1))
+    return diff
+end
+
+Base.@ccallable function jclp_nlc_nearest_m2(
+    nlc_status::Ptr{Cuchar},
+    bound::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    ntotal::Cint,
+    iseq_0based::Cint,
+    sol_val::Cdouble,
+)::Cdouble
+    nt = Int(ntotal)
+    return clp_nlc_nearest_m2(
+        PtrView(nlc_status, nt), PtrView(bound, nt), PtrView(lower, nt), PtrView(upper, nt),
+        Int(iseq_0based) + 1, Float64(sol_val),
+    )
+end
+
+Base.@ccallable function jclp_nlc_refresh_one(
+    nlc_status::Ptr{Cuchar},
+    bound::Ptr{Cdouble},
+    cost2::Ptr{Cdouble},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    ntotal::Cint,
+    iseq_0based::Cint,
+    primal_tol::Cdouble,
+    infeas_cost::Cdouble,
+)::Cvoid
+    nt = Int(ntotal)
+    clp_nlc_refresh_one!(
+        PtrView(nlc_status, nt), PtrView(bound, nt), PtrView(cost2, nt),
+        PtrView(solution, nt), PtrView(lower, nt), PtrView(upper, nt), PtrView(cost, nt),
+        Int(iseq_0based) + 1, Float64(primal_tol), Float64(infeas_cost),
+    )
+    return nothing
+end

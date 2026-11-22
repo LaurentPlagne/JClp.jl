@@ -20,4 +20,5 @@ using Test
     include("test_b8_clp_packed_matrix.jl")
     include("test_b9a_dual_row_pivot.jl")
     include("test_b9b_primal_column_pivot.jl")
+    include("test_b9c_nonlinear_cost.jl")
 end
