@@ -261,6 +261,56 @@ typedef struct ImpliedFreeActionPod {
     int32_t       _pad;
 } ImpliedFreeActionPod;
 
+/* Exact mirrors of B7c2 C++ action structs */
+typedef struct SubstActionPod {
+    double       *rlos;
+    double       *rups;
+    double       *coeffxs;
+    int32_t      *rows;
+    int32_t      *ninrowxs;
+    int32_t      *rowcolsxs;
+    double       *rowelsxs;
+    const double *costsx;
+    int32_t       col;
+    int32_t       rowy;
+    int32_t       nincol;
+    int32_t       _pad;
+} SubstActionPod;
+
+typedef struct DupcolActionPod {
+    double  thislo;
+    double  thisup;
+    double  lastlo;
+    double  lastup;
+    int32_t ithis;
+    int32_t ilast;
+    double *colels;
+    int32_t nincol;
+    int32_t _pad;
+} DupcolActionPod;
+
+typedef struct GubrowActionPod {
+    double   rhs;
+    int32_t *deletedRow;
+    double  *rowels;
+    int32_t *indices;
+    int32_t  nDrop;
+    int32_t  ninrow;
+} GubrowActionPod;
+
+typedef struct TwoxtwoActionPod {
+    double  lbound_row;
+    double  ubound_row;
+    double  lbound_col;
+    double  ubound_col;
+    double  cost_col;
+    double  cost_othercol;
+    int32_t row;
+    int32_t col;
+    int32_t othercol;
+    int32_t _pad;
+} TwoxtwoActionPod;
+
 #ifdef __cplusplus
 }
 #endif

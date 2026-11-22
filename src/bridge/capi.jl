@@ -1148,3 +1148,121 @@ Base.@ccallable function jclp_ps_implied_free_postsolve(
     ps_implied_free_postsolve!(p_ptr, actions, Int32(nactions))
     return nothing
 end
+
+# -----------------------------------------------------------------------------
+# B7c2: CoinPresolveSubst, CoinPresolveDupcol (dupcol/duprow/gubrow/twoxtwo)
+# -----------------------------------------------------------------------------
+
+Base.@ccallable function jclp_ps_subst_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    implied_free::Ptr{Cint},
+    which_free::Ptr{Cint},
+    number_free::Cint,
+    max_look::Cint,
+    actions_out::Ptr{SubstActionPod},
+    zerocols::Ptr{Cint},
+    x_to_y::Ptr{Cint},
+    alloc_subst_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nzerocols::Ptr{Cint},
+    out_nomem::Ptr{Cint},
+)::Cvoid
+    ps_subst_presolve!(
+        p_ptr, implied_free, which_free, Int32(number_free), Int32(max_look),
+        actions_out, zerocols, x_to_y, alloc_subst_cb,
+        out_nactions, out_nzerocols, out_nomem,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_subst_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{SubstActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_subst_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_coin_init_random_vec(
+    work::Ptr{Cdouble},
+    n::Cint,
+)::Cvoid
+    ps_coin_init_random_vec!(work, Int32(n))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_dupcol_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    rowmul_buf::Ptr{Cdouble},
+    swap_used_buf::Ptr{UInt8},
+    actions_out::Ptr{DupcolActionPod},
+    fixed_down::Ptr{Cint},
+    fixed_up::Ptr{Cint},
+    alloc_dbl_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nfixed_down::Ptr{Cint},
+    out_nfixed_up::Ptr{Cint},
+)::Cvoid
+    ps_dupcol_presolve!(
+        p_ptr, rowmul_buf, swap_used_buf, actions_out, fixed_down, fixed_up,
+        alloc_dbl_cb, out_nactions, out_nfixed_down, out_nfixed_up,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_dupcol_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{DupcolActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_dupcol_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_duprow_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    sort_arr::Ptr{Cint},
+    workrow::Ptr{Cdouble},
+    workcol_buf::Ptr{Cdouble},
+    out_nuseless::Ptr{Cint},
+    out_infeas_row::Ptr{Cint},
+)::Cvoid
+    ps_duprow_presolve!(p_ptr, sort_arr, workrow, workcol_buf, out_nuseless, out_infeas_row)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_gubrow_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions_out::Ptr{GubrowActionPod},
+    alloc_gub_cb::Ptr{Cvoid},
+)::Cint
+    return Cint(ps_gubrow_presolve!(p_ptr, actions_out, alloc_gub_cb))
+end
+
+Base.@ccallable function jclp_ps_gubrow_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{GubrowActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_gubrow_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_twoxtwo_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    bound_records::Ptr{TwoxtwoActionPod},
+    scratch200::Ptr{Cdouble},
+    out_offset::Ptr{Cdouble},
+)::Cint
+    return Cint(ps_twoxtwo_presolve!(p_ptr, bound_records, scratch200, out_offset))
+end
+
+Base.@ccallable function jclp_ps_twoxtwo_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{TwoxtwoActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_twoxtwo_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end

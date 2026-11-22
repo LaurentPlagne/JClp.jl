@@ -280,6 +280,56 @@ struct ImpliedFreeActionPod
     _pad::Int32
 end
 
+# B7c2 Action POD structs
+struct SubstActionPod
+    rlos::Ptr{Float64}
+    rups::Ptr{Float64}
+    coeffxs::Ptr{Float64}
+    rows::Ptr{Int32}
+    ninrowxs::Ptr{Int32}
+    rowcolsxs::Ptr{Int32}
+    rowelsxs::Ptr{Float64}
+    costsx::Ptr{Float64}
+    col::Int32
+    rowy::Int32
+    nincol::Int32
+    _pad::Int32
+end
+
+struct DupcolActionPod
+    thislo::Float64
+    thisup::Float64
+    lastlo::Float64
+    lastup::Float64
+    ithis::Int32
+    ilast::Int32
+    colels::Ptr{Float64}
+    nincol::Int32
+    _pad::Int32
+end
+
+struct GubrowActionPod
+    rhs::Float64
+    deletedRow::Ptr{Int32}
+    rowels::Ptr{Float64}
+    indices::Ptr{Int32}
+    nDrop::Int32
+    ninrow::Int32
+end
+
+struct TwoxtwoActionPod
+    lbound_row::Float64
+    ubound_row::Float64
+    lbound_col::Float64
+    ubound_col::Float64
+    cost_col::Float64
+    cost_othercol::Float64
+    row::Int32
+    col::Int32
+    othercol::Int32
+    _pad::Int32
+end
+
 # Compile-time byte offsets for mutable scalar write-back
 const _PS_OFF_dobias             = fieldoffset(CoinPresolvePodView, Base.fieldindex(CoinPresolvePodView, :dobias))
 const _PS_OFF_nrows              = fieldoffset(CoinPresolvePodView, Base.fieldindex(CoinPresolvePodView, :nrows))
