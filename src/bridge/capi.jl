@@ -2617,3 +2617,344 @@ Base.@ccallable function jclp_pm_partial_pricing(
     unsafe_store!(out_saved_dj, sdj)
     return nothing
 end
+
+# ==============================================================================
+# Phase B — B9a: ClpDualRowDantzig & ClpDualRowSteepest (@ccallable C ABI)
+# ==============================================================================
+
+Base.@ccallable function jclp_drd_pivot_row(
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ncols::Cint,
+    primal_tol::Cdouble,
+    largest_primal_err::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    r = clp_drd_pivot_row(
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(status, nt),
+        nr, nc, Float64(primal_tol), Float64(largest_primal_err),
+    )
+    return Cint(r > 0 ? (r - 1) : -1)
+end
+
+Base.@ccallable function jclp_drd_extract_alpha(
+    work::Ptr{Cdouble},
+    which::Ptr{Cint},
+    nnz::Cint,
+    cap::Cint,
+    packed::Cint,
+    pivot_row_0based::Cint,
+)::Cdouble
+    c = Int(cap)
+    return clp_drd_extract_alpha(
+        PtrView(work, c),
+        ShiftedPtrView(which, c),
+        Int(nnz),
+        packed != Cint(0),
+        Int(pivot_row_0based) + 1,
+    )
+end
+
+Base.@ccallable function jclp_drd_update_primal_solution(
+    work::Ptr{Cdouble},
+    which::Ptr{Cint},
+    nnz::Cint,
+    cap::Cint,
+    packed::Cint,
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    primal_ratio::Cdouble,
+)::Cdouble
+    c = Int(cap)
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    return clp_drd_update_primal_solution!(
+        PtrView(work, c),
+        ShiftedPtrView(which, c),
+        Int(nnz),
+        packed != Cint(0),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(cost, nt),
+        Float64(primal_ratio),
+    )
+end
+
+Base.@ccallable function jclp_drs_pivot_row(
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    io_nnz::Ptr{Cint},
+    weights::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ntotal::Cint,
+    last_pivot_row_0based::Cint,
+    mode::Cint,
+    n_factor_elems::Cint,
+    primal_tol::Cdouble,
+    largest_primal_err::Cdouble,
+    largest_dual_err::Cdouble,
+    n_iters::Cint,
+    last_bad_iter::Cint,
+    rand_u::Cdouble,
+    out_tol_changed::Ptr{Cint},
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    nnz0 = Int(unsafe_load(io_nnz))
+    lpr = Int(last_pivot_row_0based)
+    lpr1 = lpr >= 0 ? (lpr + 1) : 0
+    chosen, nnz1, tc = clp_drs_pivot_row!(
+        PtrView(infeas, nr),
+        ShiftedPtrView(infeas_idx, nr),
+        nnz0,
+        PtrView(weights, nr),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(status, nt),
+        nr, lpr1, Int(mode), Int(n_factor_elems),
+        Float64(primal_tol), Float64(largest_primal_err), Float64(largest_dual_err),
+        Int(n_iters), Int(last_bad_iter), Float64(rand_u),
+    )
+    unsafe_store!(io_nnz, Cint(nnz1))
+    unsafe_store!(out_tol_changed, Cint(tc ? 1 : 0))
+    return Cint(chosen > 0 ? (chosen - 1) : -1)
+end
+
+Base.@ccallable function jclp_drs_compact_infeasible(
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    nnz::Cint,
+    nrows::Cint,
+)::Cint
+    nr = Int(nrows)
+    return Cint(clp_drs_compact_infeasible!(PtrView(infeas, nr), ShiftedPtrView(infeas_idx, nr), Int(nnz)))
+end
+
+Base.@ccallable function jclp_drs_prep_ftran(
+    in_val::Ptr{Cdouble},
+    in_idx::Ptr{Cint},
+    nnz::Cint,
+    in_cap::Cint,
+    permute::Ptr{Cint},
+    spare_val::Ptr{Cdouble},
+    spare_idx::Ptr{Cint},
+    spare_cap::Cint,
+    nrows::Cint,
+)::Cdouble
+    ic = Int(in_cap)
+    sc = Int(spare_cap)
+    nr = Int(nrows)
+    iv = PtrView(in_val, ic)
+    ii = ShiftedPtrView(in_idx, ic)
+    sv = PtrView(spare_val, sc)
+    si = ShiftedPtrView(spare_idx, sc)
+    if permute != C_NULL
+        return clp_drs_prep_ftran!(iv, ii, Int(nnz), ShiftedPtrView(permute, nr), sv, si)
+    else
+        return clp_drs_prep_ftran!(iv, ii, Int(nnz), nothing, sv, si)
+    end
+end
+
+Base.@ccallable function jclp_drs_apply_weight_update(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    nnz::Cint,
+    upd_cap::Cint,
+    spare_val::Ptr{Cdouble},
+    spare_cap::Cint,
+    pivot_col::Ptr{Cint},
+    weights::Ptr{Cdouble},
+    alt_val::Ptr{Cdouble},
+    alt_idx::Ptr{Cint},
+    alt_cap::Cint,
+    nrows::Cint,
+    pivot_row_0based::Cint,
+    model_alpha::Cdouble,
+    norm_in::Cdouble,
+    is_network::Cint,
+    out_n_save::Ptr{Cint},
+)::Cdouble
+    uc = Int(upd_cap)
+    sc = Int(spare_cap)
+    ac = Int(alt_cap)
+    nr = Int(nrows)
+    uv = PtrView(upd_val, uc)
+    ui = ShiftedPtrView(upd_idx, uc)
+    sv = PtrView(spare_val, sc)
+    wv = PtrView(weights, nr)
+    av = PtrView(alt_val, ac)
+    ai = ShiftedPtrView(alt_idx, ac)
+    pr1 = Int(pivot_row_0based) + 1
+    if pivot_col != C_NULL
+        alpha, nsave = clp_drs_apply_weight_update!(
+            uv, ui, Int(nnz), sv, ShiftedPtrView(pivot_col, nr), wv, av, ai,
+            pr1, Float64(model_alpha), Float64(norm_in), is_network != Cint(0),
+        )
+    else
+        alpha, nsave = clp_drs_apply_weight_update!(
+            uv, ui, Int(nnz), sv, nothing, wv, av, ai,
+            pr1, Float64(model_alpha), Float64(norm_in), is_network != Cint(0),
+        )
+    end
+    unsafe_store!(out_n_save, Cint(nsave))
+    return alpha
+end
+
+Base.@ccallable function jclp_drs_update_primal_solution(
+    work::Ptr{Cdouble},
+    which::Ptr{Cint},
+    nnz::Cint,
+    work_cap::Cint,
+    packed::Cint,
+    pivot_var::Ptr{Cint},
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    io_infeas_nnz::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    primal_ratio::Cdouble,
+    primal_tol::Cdouble,
+    pivot_row_0based::Cint,
+)::Cdouble
+    wc = Int(work_cap)
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    innz0 = Int(unsafe_load(io_infeas_nnz))
+    chg, innz1 = clp_drs_update_primal_solution!(
+        PtrView(work, wc),
+        ShiftedPtrView(which, wc),
+        Int(nnz),
+        packed != Cint(0),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(infeas, nr),
+        ShiftedPtrView(infeas_idx, nr),
+        innz0,
+        PtrView(solution, nt),
+        PtrView(cost, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        Float64(primal_ratio),
+        Float64(primal_tol),
+        Int(pivot_row_0based) + 1,
+    )
+    unsafe_store!(io_infeas_nnz, Cint(innz1))
+    return chg
+end
+
+Base.@ccallable function jclp_drs_unroll_weights(
+    weights::Ptr{Cdouble},
+    saved_val::Ptr{Cdouble},
+    saved_idx::Ptr{Cint},
+    nnz::Cint,
+    saved_cap::Cint,
+    packed::Cint,
+    nrows::Cint,
+)::Cvoid
+    sc = Int(saved_cap)
+    nr = Int(nrows)
+    clp_drs_unroll_weights!(
+        PtrView(weights, nr),
+        PtrView(saved_val, sc),
+        ShiftedPtrView(saved_idx, sc),
+        Int(nnz),
+        packed != Cint(0),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_drs_looks_optimal(
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    primal_tol::Cdouble,
+    largest_primal_err::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    ok = clp_drs_looks_optimal(
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        nr, Float64(primal_tol), Float64(largest_primal_err),
+    )
+    return Cint(ok ? 1 : 0)
+end
+
+Base.@ccallable function jclp_drs_recompute_infeasibilities(
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    nrows::Cint,
+    ntotal::Cint,
+    primal_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    nnz = clp_drs_recompute_infeasibilities!(
+        PtrView(infeas, nr),
+        ShiftedPtrView(infeas_idx, nr),
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        nr, Float64(primal_tol),
+    )
+    return Cint(nnz)
+end
+
+Base.@ccallable function jclp_drs_restore_weights(
+    weights::Ptr{Cdouble},
+    saved_val::Ptr{Cdouble},
+    saved_idx::Ptr{Cint},
+    back::Ptr{Cint},
+    pivot_var::Ptr{Cint},
+    nrows::Cint,
+    ntotal::Cint,
+    first_row_0based::Cint,
+    last_row_0based_excl::Cint,
+)::Cvoid
+    nr = Int(nrows)
+    nt = Int(ntotal)
+    clp_drs_restore_weights!(
+        PtrView(weights, nr),
+        PtrView(saved_val, nr),
+        ShiftedPtrView(saved_idx, nr),
+        PtrView(back, nt),
+        ShiftedPtrView(pivot_var, nr),
+        nr, nt,
+        Int(first_row_0based) + 1,
+        Int(last_row_0based_excl),
+    )
+    return nothing
+end
