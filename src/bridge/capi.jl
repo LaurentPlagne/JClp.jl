@@ -6003,3 +6003,243 @@ Base.@ccallable function jclp_compute_duals_finalize_prep(
         return Cint(clp_compute_duals_finalize_prep!(dv, rdv, cdv, ShiftedPtrView(which_col, nc), av, rov, cov, sv, nr, nc))
     end
 end
+
+# ==============================================================================
+# Phase B — B11c-3: housekeeping, deleteRim unscaling, gutsOfSolution accuracy
+# ==============================================================================
+
+Base.@ccallable function jclp_housekeeping(
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    prog_in::Ptr{Cint},
+    prog_out::Ptr{Cint},
+    prog_way::Ptr{Cchar},
+    nrows::Cint,
+    ncols::Cint,
+    pivot_row_0based::Cint,
+    seq_in_0based::Cint,
+    seq_out_0based::Cint,
+    dir_in::Cint,
+    dir_out::Cint,
+    value_in::Cdouble,
+    value_out::Cdouble,
+    alpha::Cdouble,
+    io_alpha_accuracy::Ptr{Cdouble},
+    io_objective_value::Ptr{Cdouble},
+    objective_change::Cdouble,
+    obj_scale::Cdouble,
+    rhs_scale::Cdouble,
+    io_number_iterations::Ptr{Cint},
+    max_iterations::Cint,
+    io_change_made::Ptr{Cint},
+    io_progress_flag::Ptr{Cint},
+    special_options::Cint,
+    obj_type::Cint,
+    matrix_type::Cint,
+    hit_max_iter::Cint,
+    factor_pivots::Cint,
+    max_pivots::Cint,
+    time_to_refac::Cint,
+    invert_now::Cint,
+    io_force_factorization::Ptr{Cint},
+    out_action::Ptr{Cint},
+    out_cycle_len::Ptr{Cint},
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    pr1 = Int(pivot_row_0based) >= 0 ? (Int(pivot_row_0based) + 1) : 0
+    si1 = Int(seq_in_0based) + 1
+    so1 = Int(seq_out_0based) + 1
+
+    ret, act, cyc, nit, chg, pflg, aacc, objv, ffac = clp_housekeeping!(
+        ShiftedPtrView(pivot_var, nr),
+        PtrView(solution, nt),
+        PtrView(lower, nt),
+        PtrView(upper, nt),
+        PtrView(status, nt),
+        PtrView(prog_in, CLP_CYCLE),
+        PtrView(prog_out, CLP_CYCLE),
+        PtrView(prog_way, CLP_CYCLE),
+        nr, nc, pr1, si1, so1,
+        Int(dir_in), Int(dir_out),
+        Float64(value_in), Float64(value_out), Float64(alpha),
+        Float64(unsafe_load(io_alpha_accuracy)),
+        Float64(unsafe_load(io_objective_value)),
+        Float64(objective_change), Float64(obj_scale), Float64(rhs_scale),
+        Int(unsafe_load(io_number_iterations)), Int(max_iterations),
+        Int(unsafe_load(io_change_made)), Int(unsafe_load(io_progress_flag)),
+        Int(special_options), Int(obj_type), Int(matrix_type),
+        hit_max_iter != Cint(0),
+        Int(factor_pivots), Int(max_pivots),
+        time_to_refac != Cint(0), invert_now != Cint(0),
+        Int(unsafe_load(io_force_factorization)),
+    )
+
+    unsafe_store!(io_alpha_accuracy, aacc)
+    unsafe_store!(io_objective_value, objv)
+    unsafe_store!(io_number_iterations, Cint(nit))
+    unsafe_store!(io_change_made, Cint(chg))
+    unsafe_store!(io_progress_flag, Cint(pflg))
+    unsafe_store!(io_force_factorization, Cint(ffac))
+    unsafe_store!(out_action, Cint(act))
+    unsafe_store!(out_cycle_len, Cint(cyc))
+    return Cint(ret)
+end
+
+Base.@ccallable function jclp_delete_rim_unscale(
+    col_act::Ptr{Cdouble},
+    col_dj::Ptr{Cdouble},
+    row_act::Ptr{Cdouble},
+    dual::Ptr{Cdouble},
+    col_act_w::Ptr{Cdouble},
+    col_lo_w::Ptr{Cdouble},
+    col_hi_w::Ptr{Cdouble},
+    col_dj_w::Ptr{Cdouble},
+    row_act_w::Ptr{Cdouble},
+    row_lo_w::Ptr{Cdouble},
+    row_hi_w::Ptr{Cdouble},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    row_lo::Ptr{Cdouble},
+    row_hi::Ptr{Cdouble},
+    row_obj::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    inv_row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    ray::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    has_solution::Cint,
+    obj_scale::Cdouble,
+    rhs_scale::Cdouble,
+    primal_tol::Cdouble,
+    dual_tol::Cdouble,
+    prob_status::Cint,
+    io_sec_status::Ptr{Cint},
+    out_upper_out::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    ca = PtrView(col_act, nc)
+    cd = PtrView(col_dj, nc)
+    ra = PtrView(row_act, nr)
+    du = PtrView(dual, nr)
+    clw = PtrView(col_lo_w, nc)
+    chw = PtrView(col_hi_w, nc)
+    cdw = PtrView(col_dj_w, nc)
+    raw = PtrView(row_act_w, nr)
+    rlw = PtrView(row_lo_w, nr)
+    rhw = PtrView(row_hi_w, nr)
+    clo = PtrView(col_lo, nc)
+    chi = PtrView(col_hi, nc)
+    rlo = PtrView(row_lo, nr)
+    rhi = PtrView(row_hi, nr)
+    hsol = has_solution != Cint(0)
+    os = Float64(obj_scale)
+    rs = Float64(rhs_scale)
+    pt = Float64(primal_tol)
+    dt = Float64(dual_tol)
+    ps = Int(prob_status)
+    ss = Int(unsafe_load(io_sec_status))
+
+    if col_act_w == C_NULL
+        uo, ss_out = clp_delete_rim_unscale!(
+            ca, cd, ra, du, nothing, clw, chw, cdw, raw, rlw, rhw, clo, chi, rlo, rhi,
+            nothing, nothing, nothing, nothing, nothing, nothing,
+            nr, nc, hsol, os, rs, pt, dt, ps, ss,
+        )
+    elseif row_scale != C_NULL && hsol
+        caw = PtrView(col_act_w, nc)
+        rsv = PtrView(row_scale, nr)
+        irsv = PtrView(inv_row_scale, nr)
+        csv = PtrView(col_scale, nc)
+        icsv = PtrView(inv_col_scale, nc)
+        if row_obj == C_NULL
+            uo, ss_out = clp_delete_rim_unscale!(
+                ca, cd, ra, du, caw, clw, chw, cdw, raw, rlw, rhw, clo, chi, rlo, rhi,
+                nothing, rsv, irsv, csv, icsv, nothing,
+                nr, nc, hsol, os, rs, pt, dt, ps, ss,
+            )
+        else
+            uo, ss_out = clp_delete_rim_unscale!(
+                ca, cd, ra, du, caw, clw, chw, cdw, raw, rlw, rhw, clo, chi, rlo, rhi,
+                PtrView(row_obj, nr), rsv, irsv, csv, icsv, nothing,
+                nr, nc, hsol, os, rs, pt, dt, ps, ss,
+            )
+        end
+        if ray != C_NULL
+            if ps == 2
+                rv = PtrView(ray, nc)
+                @inbounds for i in 1:nc
+                    rv[i] *= csv[i]
+                end
+            elseif ps == 1
+                rv = PtrView(ray, nr)
+                @inbounds for i in 1:nr
+                    rv[i] *= rsv[i]
+                end
+            end
+        end
+    else
+        caw = PtrView(col_act_w, nc)
+        if row_obj == C_NULL
+            uo, ss_out = clp_delete_rim_unscale!(
+                ca, cd, ra, du, caw, clw, chw, cdw, raw, rlw, rhw, clo, chi, rlo, rhi,
+                nothing, nothing, nothing, nothing, nothing, nothing,
+                nr, nc, hsol, os, rs, pt, dt, ps, ss,
+            )
+        else
+            uo, ss_out = clp_delete_rim_unscale!(
+                ca, cd, ra, du, caw, clw, chw, cdw, raw, rlw, rhw, clo, chi, rlo, rhi,
+                PtrView(row_obj, nr), nothing, nothing, nothing, nothing, nothing,
+                nr, nc, hsol, os, rs, pt, dt, ps, ss,
+            )
+        end
+    end
+
+    unsafe_store!(io_sec_status, Cint(ss_out))
+    unsafe_store!(out_upper_out, uo)
+    return nothing
+end
+
+Base.@ccallable function jclp_guts_of_solution_check_accuracy(
+    nrows::Cint,
+    number_iterations::Cint,
+    algorithm::Cint,
+    values_pass::Cint,
+    force_factorization::Cint,
+    io_zero_tol::Ptr{Cdouble},
+    io_pivot_tol::Ptr{Cdouble},
+    old_primal_err::Cdouble,
+    old_dual_err::Cdouble,
+    io_primal_err::Ptr{Cdouble},
+    io_dual_err::Ptr{Cdouble},
+    nlc_sum_infeas::Cdouble,
+    infeas_cost::Cdouble,
+    prog_iter0::Cint,
+    prog_iter_last::Cint,
+    io_first_free_0based::Ptr{Cint},
+)::Cint
+    ff0 = Int(unsafe_load(io_first_free_0based))
+    ff1 = ff0 >= 0 ? (ff0 + 1) : 0
+    ret, nzt, npt, perr, derr, ff_out = clp_guts_of_solution_check_accuracy(
+        Int(nrows), Int(number_iterations), Int(algorithm),
+        values_pass != Cint(0), Int(force_factorization),
+        Float64(unsafe_load(io_zero_tol)), Float64(unsafe_load(io_pivot_tol)),
+        Float64(old_primal_err), Float64(old_dual_err),
+        Float64(unsafe_load(io_primal_err)), Float64(unsafe_load(io_dual_err)),
+        Float64(nlc_sum_infeas), Float64(infeas_cost),
+        Int(prog_iter0), Int(prog_iter_last), ff1,
+    )
+    unsafe_store!(io_zero_tol, nzt)
+    unsafe_store!(io_pivot_tol, npt)
+    unsafe_store!(io_primal_err, perr)
+    unsafe_store!(io_dual_err, derr)
+    unsafe_store!(io_first_free_0based, Cint(ff_out > 0 ? (ff_out - 1) : -1))
+    return Cint(ret)
+end

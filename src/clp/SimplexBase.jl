@@ -1175,3 +1175,412 @@ function clp_compute_duals_finalize_prep!(
         return n
     end
 end
+
+# ==============================================================================
+# Phase B — B11c-3: housekeeping, deleteRim unscaling, gutsOfSolution accuracy
+# ==============================================================================
+
+const CLP_HK_ACT_DONE        = 0  # return ret_code directly
+const CLP_HK_ACT_CYCLE       = 1  # cycle > 0: C++ draws RNG, updates forceFactorization or flags sequenceOut, returns 1
+const CLP_HK_ACT_RAND_REFAC  = 2  # high-iter random refactor check: C++ draws RNG and decides 0 or 1
+
+"""
+    clp_housekeeping!(...)
+
+Hot per-pivot basis housekeeping matching `ClpSimplex::housekeeping(double objectiveChange)`
+(lines 2199–2623) for standard LP (`matrix_->type() == 1`, no `rhsOffset`, no `trustedUserPointer_`).
+Returns `(ret_code, action, cycle_len, number_iterations, change_made, progress_flag,
+          alpha_accuracy, objective_value, force_factorization)`.
+"""
+function clp_housekeeping!(
+    pivot_var::AbstractVector{Int32},
+    solution::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    status::AbstractVector{UInt8},
+    prog_in::AbstractVector{Int32},
+    prog_out::AbstractVector{Int32},
+    prog_way::AbstractVector{Int8},
+    nrows::Int,
+    ncols::Int,
+    pivot_row::Int,
+    seq_in::Int,
+    seq_out::Int,
+    dir_in::Int,
+    dir_out::Int,
+    value_in::Float64,
+    value_out::Float64,
+    alpha::Float64,
+    alpha_accuracy::Float64,
+    objective_value::Float64,
+    objective_change::Float64,
+    obj_scale::Float64,
+    rhs_scale::Float64,
+    number_iterations::Int,
+    max_iterations::Int,
+    change_made::Int,
+    progress_flag::Int,
+    special_options::Int,
+    obj_type::Int,
+    matrix_type::Int,
+    hit_max_iter::Bool,
+    factor_pivots::Int,
+    max_pivots::Int,
+    time_to_refac::Bool,
+    invert_now::Bool,
+    force_factorization::Int,
+)::Tuple{Int,Int,Int,Int,Int,Int,Float64,Float64,Int}
+    number_iterations += 1
+    change_made += 1
+
+    @inbounds begin
+        if pivot_row >= 1
+            pivot_var[pivot_row] = Int32(seq_in)
+        end
+        if upper[seq_in] > 1.0e20 && lower[seq_in] < -1.0e20
+            progress_flag |= 2
+        end
+        solution[seq_in] = value_in
+        if upper[seq_out] - lower[seq_out] < 1.0e-12
+            progress_flag |= 1
+        end
+        if seq_in != seq_out
+            if alpha_accuracy > 0.0
+                av = abs(alpha)
+                if av > 1.0
+                    alpha_accuracy *= av
+                else
+                    alpha_accuracy /= av
+                end
+            end
+            status[seq_in] = _sb_set_status(status[seq_in], CLP_STATUS_BASIC)
+            if upper[seq_out] - lower[seq_out] > 0.0
+                if abs(value_out - lower[seq_out]) < abs(value_out - upper[seq_out])
+                    status[seq_out] = _sb_set_status(status[seq_out], CLP_STATUS_AT_LOWER)
+                else
+                    status[seq_out] = _sb_set_status(status[seq_out], CLP_STATUS_AT_UPPER)
+                end
+            else
+                status[seq_out] = _sb_set_status(status[seq_out], CLP_STATUS_IS_FIXED)
+            end
+            solution[seq_out] = value_out
+        else
+            if abs(value_in - lower[seq_in]) < abs(value_in - upper[seq_in])
+                status[seq_in] = _sb_set_status(status[seq_in], CLP_STATUS_AT_LOWER)
+            else
+                status[seq_in] = _sb_set_status(status[seq_in], CLP_STATUS_AT_UPPER)
+            end
+        end
+    end
+
+    objective_value += objective_change / (obj_scale * rhs_scale)
+
+    if hit_max_iter
+        return (2, CLP_HK_ACT_DONE, 0, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    end
+
+    # Cycle check (raw 0-based sequences stored in prog_in/prog_out to match C++ ClpSimplexProgress)
+    cyc = clp_progress_cycle!(prog_in, prog_out, prog_way, Int32(seq_in - 1), Int32(seq_out - 1), dir_in, dir_out)
+    if cyc > 0 && obj_type < 2 && matrix_type < 15
+        clp_progress_start_check!(prog_in, prog_out, prog_way)
+        return (1, CLP_HK_ACT_CYCLE, cyc, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    end
+
+    dont_invert = ((special_options & 16384) != 0 && number_iterations * 3 > 2 * max_iterations)
+    if factor_pivots == max_pivots || max_pivots < 2
+        return (1, CLP_HK_ACT_DONE, 0, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    elseif (time_to_refac && !dont_invert) || invert_now
+        return (1, CLP_HK_ACT_DONE, 0, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    elseif force_factorization > 0 && factor_pivots == force_factorization
+        force_factorization = (3 + 5 * force_factorization) ÷ 4
+        if force_factorization > max_pivots
+            force_factorization = -1
+        end
+        return (1, CLP_HK_ACT_DONE, 0, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    elseif number_iterations > 1000 + 10 * (nrows + (ncols >> 2)) && matrix_type < 15
+        return (0, CLP_HK_ACT_RAND_REFAC, 0, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    else
+        return (0, CLP_HK_ACT_DONE, 0, number_iterations, change_made, progress_flag,
+                alpha_accuracy, objective_value, force_factorization)
+    end
+end
+
+"""
+    clp_delete_rim_unscale!(...)
+
+Matches the solution/dual/ray unscaling and secondary-status detection block of
+`ClpSimplex::deleteRim` (lines 4952–5145).
+Returns `(upper_out, secondary_status)`.
+"""
+function clp_delete_rim_unscale!(
+    col_act::AbstractVector{Float64},
+    col_dj::AbstractVector{Float64},
+    row_act::AbstractVector{Float64},
+    dual::AbstractVector{Float64},
+    col_act_w::Union{AbstractVector{Float64},Nothing},
+    col_lo_w::AbstractVector{Float64},
+    col_hi_w::AbstractVector{Float64},
+    col_dj_w::AbstractVector{Float64},
+    row_act_w::AbstractVector{Float64},
+    row_lo_w::AbstractVector{Float64},
+    row_hi_w::AbstractVector{Float64},
+    col_lo::AbstractVector{Float64},
+    col_hi::AbstractVector{Float64},
+    row_lo::AbstractVector{Float64},
+    row_hi::AbstractVector{Float64},
+    row_obj::Union{AbstractVector{Float64},Nothing},
+    row_scale::Union{AbstractVector{Float64},Nothing},
+    inv_row_scale::Union{AbstractVector{Float64},Nothing},
+    col_scale::Union{AbstractVector{Float64},Nothing},
+    inv_col_scale::Union{AbstractVector{Float64},Nothing},
+    ray::Union{AbstractVector{Float64},Nothing},
+    nrows::Int,
+    ncols::Int,
+    has_solution::Bool,
+    obj_scale::Float64,
+    rhs_scale::Float64,
+    primal_tol::Float64,
+    dual_tol::Float64,
+    prob_status::Int,
+    sec_status::Int,
+)::Tuple{Float64,Int}
+    upper_out = 1.0
+    if row_scale !== nothing && has_solution && inv_row_scale !== nothing && col_scale !== nothing && inv_col_scale !== nothing && col_act_w !== nothing
+        n_p_unsc = 0
+        n_d_unsc = 0
+        scale_c = 1.0 / obj_scale
+        scale_r = 1.0 / rhs_scale
+        @inbounds for i in 1:ncols
+            sf = col_scale[i]
+            vs = col_act_w[i]
+            ls = col_lo_w[i]
+            us = col_hi_w[i]
+            if ls > -1.0e20 || us < 1.0e20
+                if !(vs < ls - primal_tol || vs > us + primal_tol)
+                    upper_out = max(upper_out, min(vs - ls, us - vs))
+                end
+            end
+            val = vs * sf * scale_r
+            col_act[i] = val
+            if val < col_lo[i] - primal_tol || val > col_hi[i] + primal_tol
+                n_p_unsc += 1
+            end
+            vd = (col_dj_w[i] * scale_c) * inv_col_scale[i]
+            col_dj[i] = vd
+            if val > col_lo[i] + primal_tol && vd > dual_tol
+                n_d_unsc += 1
+            end
+            if val < col_hi[i] - primal_tol && vd < -dual_tol
+                n_d_unsc += 1
+            end
+        end
+        @inbounds for i in 1:nrows
+            sf = row_scale[i]
+            vs = row_act_w[i]
+            ls = row_lo_w[i]
+            us = row_hi_w[i]
+            if ls > -1.0e20 || us < 1.0e20
+                if !(vs < ls - primal_tol || vs > us + primal_tol)
+                    upper_out = max(upper_out, min(vs - ls, us - vs))
+                end
+            end
+            val = (vs * scale_r) * inv_row_scale[i]
+            row_act[i] = val
+            if val < row_lo[i] - primal_tol || val > row_hi[i] + primal_tol
+                n_p_unsc += 1
+            end
+            vd = dual[i] * (sf * scale_c)
+            dual[i] = vd
+            if row_obj !== nothing
+                vd += row_obj[i]
+            end
+            if val > row_lo[i] + primal_tol && vd > dual_tol
+                n_d_unsc += 1
+            end
+            if val < row_hi[i] - primal_tol && vd < -dual_tol
+                n_d_unsc += 1
+            end
+        end
+        if prob_status == 0 && sec_status == 0
+            if n_p_unsc != 0
+                sec_status = n_d_unsc != 0 ? 4 : 2
+            elseif n_d_unsc != 0
+                sec_status = 3
+            end
+        end
+        if ray !== nothing
+            if prob_status == 2
+                @inbounds for i in 1:ncols
+                    ray[i] *= col_scale[i]
+                end
+            elseif prob_status == 1
+                @inbounds for i in 1:nrows
+                    ray[i] *= row_scale[i]
+                end
+            end
+        end
+    elseif rhs_scale != 1.0 || obj_scale != 1.0
+        if col_act_w !== nothing
+            n_p_unsc = 0
+            n_d_unsc = 0
+            scale_c = 1.0 / obj_scale
+            scale_r = 1.0 / rhs_scale
+            @inbounds for i in 1:ncols
+                vs = col_act_w[i]
+                ls = col_lo_w[i]
+                us = col_hi_w[i]
+                if ls > -1.0e20 || us < 1.0e20
+                    if !(vs < ls - primal_tol || vs > us + primal_tol)
+                        upper_out = max(upper_out, min(vs - ls, us - vs))
+                    end
+                end
+                val = vs * scale_r
+                col_act[i] = val
+                if val < col_lo[i] - primal_tol || val > col_hi[i] + primal_tol
+                    n_p_unsc += 1
+                end
+                vd = col_dj_w[i] * scale_c
+                col_dj[i] = vd
+                if val > col_lo[i] + primal_tol && vd > dual_tol
+                    n_d_unsc += 1
+                end
+                if val < col_hi[i] - primal_tol && vd < -dual_tol
+                    n_d_unsc += 1
+                end
+            end
+            @inbounds for i in 1:nrows
+                vs = row_act_w[i]
+                ls = row_lo_w[i]
+                us = row_hi_w[i]
+                if ls > -1.0e20 || us < 1.0e20
+                    if !(vs < ls - primal_tol || vs > us + primal_tol)
+                        upper_out = max(upper_out, min(vs - ls, us - vs))
+                    end
+                end
+                val = vs * scale_r
+                row_act[i] = val
+                if val < row_lo[i] - primal_tol || val > row_hi[i] + primal_tol
+                    n_p_unsc += 1
+                end
+                vd = dual[i] * scale_c
+                dual[i] = vd
+                if row_obj !== nothing
+                    vd += row_obj[i]
+                end
+                if val > row_lo[i] + primal_tol && vd > dual_tol
+                    n_d_unsc += 1
+                end
+                if val < row_hi[i] - primal_tol && vd < -dual_tol
+                    n_d_unsc += 1
+                end
+            end
+            if prob_status == 0 && sec_status == 0
+                if n_p_unsc != 0
+                    sec_status = n_d_unsc != 0 ? 4 : 2
+                elseif n_d_unsc != 0
+                    sec_status = 3
+                end
+            end
+        end
+    else
+        if col_act_w !== nothing
+            @inbounds for i in 1:ncols
+                val = col_act_w[i]
+                lo = col_lo_w[i]
+                hi = col_hi_w[i]
+                if lo > -1.0e20 || hi < 1.0e20
+                    if val > lo && val < hi
+                        upper_out = max(upper_out, min(val - lo, hi - val))
+                    end
+                end
+                col_act[i] = val
+                col_dj[i] = col_dj_w[i]
+            end
+            @inbounds for i in 1:nrows
+                val = row_act_w[i]
+                lo = row_lo_w[i]
+                hi = row_hi_w[i]
+                if lo > -1.0e20 || hi < 1.0e20
+                    if val > lo && val < hi
+                        upper_out = max(upper_out, min(val - lo, hi - val))
+                    end
+                end
+                row_act[i] = val
+            end
+        end
+    end
+    return (upper_out, sec_status)
+end
+
+"""
+    clp_guts_of_solution_check_accuracy(...)
+
+Matches lines 799–852 of `ClpSimplex::gutsOfSolution`.
+Returns `(return_code, new_zero_tol, new_pivot_tol, largest_primal_err, largest_dual_err, first_free_out)`.
+"""
+function clp_guts_of_solution_check_accuracy(
+    nrows::Int,
+    number_iterations::Int,
+    algorithm::Int,
+    values_pass::Bool,
+    force_factorization::Int,
+    zero_tol::Float64,
+    pivot_tol::Float64,
+    old_primal_err::Float64,
+    old_dual_err::Float64,
+    primal_err::Float64,
+    dual_err::Float64,
+    nlc_sum_infeas::Float64,
+    infeas_cost::Float64,
+    prog_iter0::Int,
+    prog_iter_last::Int,
+    first_free_in::Int,
+)::Tuple{Int,Float64,Float64,Float64,Float64,Int}
+    new_zt = zero_tol
+    if primal_err > 1.0e-1 && nrows > 100 && number_iterations != 0
+        if new_zt > 1.0e-18
+            new_zt = 1.0e-18
+        end
+    end
+    ret = 0
+    new_pt = pivot_tol
+    not_changed = true
+    if number_iterations != 0 &&
+       (force_factorization > 2 || force_factorization < 0 || new_pt < 0.9899999999) &&
+       (old_dual_err != 0.0 || old_primal_err != 0.0)
+        use_old_d = old_dual_err
+        use_d = dual_err
+        if algorithm > 0 && nlc_sum_infeas != 0.0
+            fac = max(1.0, min(1.0e3, infeas_cost * 1.0e-6))
+            use_old_d /= fac
+            use_d /= fac
+        end
+        if (primal_err > 1.0e3 && old_primal_err * 1.0e2 < primal_err) ||
+           (use_d > 1.0e3 && use_old_d * 1.0e2 < use_d)
+            pt_before = new_pt
+            fac = (primal_err > 1.0e10 || dual_err > 1.0e10) ? 2.0 : 1.2
+            if pt_before < 0.1
+                new_pt = 0.1
+            elseif pt_before < 0.98999999
+                new_pt = min(0.99, pt_before * fac)
+            end
+            not_changed = (pt_before == new_pt)
+            if pt_before < 0.9899999
+                primal_err = 0.0
+                dual_err = 0.0
+                ret = -123456789
+            end
+        end
+    end
+    if prog_iter0 > 0 && (prog_iter_last - prog_iter0) < CLP_PROGRESS * 3 && new_pt < 0.25 && not_changed
+        new_pt = new_pt * 1.5
+    end
+    first_free_out = (!values_pass && algorithm > 0) ? 0 : first_free_in
+    return (ret, new_zt, new_pt, primal_err, dual_err, first_free_out)
+end
