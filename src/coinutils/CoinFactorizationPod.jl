@@ -118,3 +118,92 @@ end
 
 const CF_BITS_PER_CHECK = Int32(8)
 const CF_CHECK_SHIFT = Int32(3)
+
+# Exact Julia mirror of CoinFactorizationFactorState in bridge/jclp_cf_pod.h (464 bytes).
+struct CoinFactorizationFactorStatePod
+    # 36 8-byte pointers
+    elementU::Ptr{Float64}
+    indexRowU::Ptr{Int32}
+    indexColumnU::Ptr{Int32}
+    startColumnU::Ptr{Int32}
+    startRowU::Ptr{Int32}
+    convertRowToColumnU::Ptr{Int32}
+    numberInRow::Ptr{Int32}
+    numberInColumn::Ptr{Int32}
+    numberInColumnPlus::Ptr{Int32}
+
+    elementL::Ptr{Float64}
+    indexRowL::Ptr{Int32}
+    startColumnL::Ptr{Int32}
+    elementByRowL::Ptr{Float64}
+    indexColumnL::Ptr{Int32}
+    startRowL::Ptr{Int32}
+
+    pivotColumn::Ptr{Int32}
+    pivotColumnBack::Ptr{Int32}
+    permute::Ptr{Int32}
+    permuteBack::Ptr{Int32}
+    pivotRegion::Ptr{Float64}
+
+    firstCount::Ptr{Int32}
+    nextCount::Ptr{Int32}
+    lastCount::Ptr{Int32}
+    nextColumn::Ptr{Int32}
+    lastColumn::Ptr{Int32}
+    nextRow::Ptr{Int32}
+    lastRow::Ptr{Int32}
+    saveColumn::Ptr{Int32}
+    markRow::Ptr{Int32}
+
+    workArea::Ptr{Float64}
+    workArea2::Ptr{UInt32}
+    denseAreaAddress::Ptr{Float64}
+    densePermute::Ptr{Int32}
+    sparseArray::Ptr{Int32}
+
+    grow_work_area2_cb::Ptr{Cvoid}
+    cb_ctx::Ptr{Cvoid}
+
+    # 5 8-byte doubles
+    pivotTolerance::Float64
+    zeroTolerance::Float64
+    slackValue::Float64
+    areaFactor::Float64
+    timeLimit::Float64
+
+    # 34 4-byte int32 scalars
+    numberRows::Int32
+    numberColumns::Int32
+    maximumRowsExtra::Int32
+    maximumColumnsExtra::Int32
+    biggerDimension::Int32
+    numberGoodU::Int32
+    numberGoodL::Int32
+    numberSlacks::Int32
+    numberU::Int32
+    maximumU::Int32
+    lengthU::Int32
+    lengthAreaU::Int32
+    numberL::Int32
+    baseL::Int32
+    lengthL::Int32
+    lengthAreaL::Int32
+    numberR::Int32
+    lengthR::Int32
+    lengthAreaR::Int32
+    totalElements::Int32
+    factorElements::Int32
+    numberDense::Int32
+    denseThreshold::Int32
+    numberTrials::Int32
+    biasLU::Int32
+    numberCompressions::Int32
+    status::Int32
+    maximumPivots::Int32
+    workArea2Size::Int32
+    sparseThreshold::Int32
+    sparseThreshold2::Int32
+    useExtraR::Int32
+    freeDense::Int32
+    _pad::Int32
+end

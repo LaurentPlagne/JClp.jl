@@ -506,3 +506,55 @@ Base.@ccallable function jclp_cf_replace_column(
     cf = unsafe_load(cf_ptr)
     return Cint(cf_replace_column!(cf, st_ptr, reg_ptr, Int32(pivot_row), pivot_check, check_before_modifying != Cint(0)))
 end
+
+# --- B5c: CoinFactorization Markowitz Sparse LU ---
+
+Base.@ccallable function jclp_cf_factor_state_sizeof()::Cint
+    return Cint(sizeof(CoinFactorizationFactorStatePod))
+end
+
+Base.@ccallable function jclp_cf_pre_process(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+    state::Cint,
+)::Cvoid
+    cf_pre_process!(st_ptr, Int32(state))
+    return nothing
+end
+
+Base.@ccallable function jclp_cf_factor_sparse(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+)::Cint
+    return Cint(cf_factor_sparse!(st_ptr))
+end
+
+Base.@ccallable function jclp_cf_factor_dense(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+)::Cint
+    return Cint(cf_factor_dense!(st_ptr))
+end
+
+Base.@ccallable function jclp_cf_factor_singular(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+)::Cint
+    return Cint(cf_factor_singular!(st_ptr))
+end
+
+Base.@ccallable function jclp_cf_cleanup(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+)::Cvoid
+    cf_cleanup!(st_ptr)
+    return nothing
+end
+
+Base.@ccallable function jclp_cf_go_sparse_thresholds(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+)::Cint
+    return Cint(cf_go_sparse_thresholds!(st_ptr))
+end
+
+Base.@ccallable function jclp_cf_go_sparse_build(
+    st_ptr::Ptr{CoinFactorizationFactorStatePod},
+)::Cvoid
+    cf_go_sparse_build!(st_ptr)
+    return nothing
+end

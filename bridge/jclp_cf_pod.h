@@ -133,6 +133,100 @@ typedef struct CoinFactorizationReplaceState {
     int32_t  _pad;
 } CoinFactorizationReplaceState;
 
+/* Callback to grow workArea2_ inside CoinFactorization::factorSparse* when size > workSize. */
+typedef uint32_t *(*jclp_grow_work2_fn)(void *ctx, int32_t new_size);
+
+/* POD view of CoinFactorization arrays & mutable scalars for B5c (Markowitz Sparse LU).
+   All 8-byte fields come first (36 pointers + 5 doubles = 328 bytes), followed by
+   34 int32_t fields (136 bytes) -> 464 bytes total, 8-byte aligned. */
+typedef struct CoinFactorizationFactorState {
+    /* --- 36 8-byte pointers --- */
+    double   *elementU;
+    int32_t  *indexRowU;
+    int32_t  *indexColumnU;
+    int32_t  *startColumnU;
+    int32_t  *startRowU;
+    int32_t  *convertRowToColumnU;
+    int32_t  *numberInRow;
+    int32_t  *numberInColumn;
+    int32_t  *numberInColumnPlus;
+
+    double   *elementL;
+    int32_t  *indexRowL;
+    int32_t  *startColumnL;
+    double   *elementByRowL;
+    int32_t  *indexColumnL;
+    int32_t  *startRowL;
+
+    int32_t  *pivotColumn;
+    int32_t  *pivotColumnBack;
+    int32_t  *permute;
+    int32_t  *permuteBack;
+    double   *pivotRegion;
+
+    int32_t  *firstCount;
+    int32_t  *nextCount;
+    int32_t  *lastCount;
+    int32_t  *nextColumn;
+    int32_t  *lastColumn;
+    int32_t  *nextRow;
+    int32_t  *lastRow;
+    int32_t  *saveColumn;
+    int32_t  *markRow;
+
+    double   *workArea;
+    uint32_t *workArea2;
+    double   *denseAreaAddress;
+    int32_t  *densePermute;
+    int32_t  *sparseArray;
+
+    jclp_grow_work2_fn grow_work_area2_cb;
+    void     *cb_ctx;
+
+    /* --- 5 8-byte doubles --- */
+    double    pivotTolerance;
+    double    zeroTolerance;
+    double    slackValue;
+    double    areaFactor;
+    double    timeLimit;
+
+    /* --- 34 4-byte int32_t scalars --- */
+    int32_t   numberRows;
+    int32_t   numberColumns;
+    int32_t   maximumRowsExtra;
+    int32_t   maximumColumnsExtra;
+    int32_t   biggerDimension;
+    int32_t   numberGoodU;
+    int32_t   numberGoodL;
+    int32_t   numberSlacks;
+    int32_t   numberU;
+    int32_t   maximumU;
+    int32_t   lengthU;
+    int32_t   lengthAreaU;
+    int32_t   numberL;
+    int32_t   baseL;
+    int32_t   lengthL;
+    int32_t   lengthAreaL;
+    int32_t   numberR;
+    int32_t   lengthR;
+    int32_t   lengthAreaR;
+    int32_t   totalElements;
+    int32_t   factorElements;
+    int32_t   numberDense;
+    int32_t   denseThreshold;
+    int32_t   numberTrials;
+    int32_t   biasLU;
+    int32_t   numberCompressions;
+    int32_t   status;
+    int32_t   maximumPivots;
+    int32_t   workArea2Size;
+    int32_t   sparseThreshold;
+    int32_t   sparseThreshold2;
+    int32_t   useExtraR;
+    int32_t   freeDense;
+    int32_t   _pad;
+} CoinFactorizationFactorState;
+
 #ifdef __cplusplus
 }
 #endif

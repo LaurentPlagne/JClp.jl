@@ -10,4 +10,5 @@ using Test
     include("test_b5a_btran.jl")
     include("test_b5a_ftran.jl")
     include("test_b5b_replace.jl")
+    include("test_b5c_factor.jl")
 end

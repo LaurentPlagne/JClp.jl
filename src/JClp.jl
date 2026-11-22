@@ -12,6 +12,7 @@ include("coinutils/CoinFactorizationPod.jl")
 include("coinutils/CoinFactorizationBtran.jl")
 include("coinutils/CoinFactorizationFtran.jl")
 include("coinutils/CoinFactorizationReplace.jl")
+include("coinutils/CoinFactorizationFactor.jl")
 
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
 include("bridge/capi.jl")
