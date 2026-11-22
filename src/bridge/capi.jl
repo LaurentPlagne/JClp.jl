@@ -2958,3 +2958,350 @@ Base.@ccallable function jclp_drs_restore_weights(
     )
     return nothing
 end
+
+# ==============================================================================
+# Phase B — B9b: ClpPrimalColumnDantzig & ClpPrimalColumnSteepest (@ccallable)
+# ==============================================================================
+
+Base.@ccallable function jclp_pcd_update_djs(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    rc::Ptr{Cdouble},
+    rc_len::Cint,
+)::Cvoid
+    uc = Int(upd_cap)
+    clp_pcd_update_djs!(PtrView(upd_val, uc), ShiftedPtrView(upd_idx, uc), Int(n_upd), PtrView(rc, Int(rc_len)))
+    return nothing
+end
+
+Base.@ccallable function jclp_pcd_price(
+    rc::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ncols::Cint,
+    dual_tol::Cdouble,
+)::Cint
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    r = clp_pcd_price(PtrView(rc, nt), PtrView(status, nt), nr, nc, Float64(dual_tol))
+    return Cint(r > 0 ? (r - 1) : -1)
+end
+
+Base.@ccallable function jclp_pcs_price_scan(
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    nnz::Cint,
+    weights::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    mode::Cint,
+    switch_type::Cint,
+    n_wanted::Cint,
+    tol_sq::Cdouble,
+    rand_u::Cdouble,
+    out_best_dj::Ptr{Cdouble},
+)::Cint
+    nt = Int(ntotal)
+    best_seq, best_dj = clp_pcs_price_scan(
+        PtrView(infeas, nt),
+        ShiftedPtrView(infeas_idx, nt),
+        Int(nnz),
+        PtrView(weights, nt),
+        PtrView(status, nt),
+        Int(mode),
+        Int(switch_type),
+        Int(n_wanted),
+        Float64(tol_sq),
+        Float64(rand_u),
+    )
+    if out_best_dj != C_NULL
+        unsafe_store!(out_best_dj, best_dj)
+    end
+    return Cint(best_seq > 0 ? (best_seq - 1) : -1)
+end
+
+Base.@ccallable function jclp_pcs_just_djs_section(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    rc::Ptr{Cdouble},
+    rc_len::Cint,
+    status::Ptr{Cuchar},
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    infeas_nnz::Cint,
+    ntotal::Cint,
+    add_seq::Cint,
+    slack_mult::Cdouble,
+    tol::Cdouble,
+)::Cint
+    uc = Int(upd_cap)
+    nt = Int(ntotal)
+    nnz1 = clp_pcs_just_djs_section!(
+        PtrView(upd_val, uc),
+        ShiftedPtrView(upd_idx, uc),
+        Int(n_upd),
+        PtrView(rc, Int(rc_len)),
+        PtrView(status, nt),
+        PtrView(infeas, nt),
+        ShiftedPtrView(infeas_idx, nt),
+        Int(infeas_nnz),
+        Int(add_seq),
+        Float64(slack_mult),
+        Float64(tol),
+    )
+    return Cint(nnz1)
+end
+
+Base.@ccallable function jclp_pcs_devex_section(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    rc::Ptr{Cdouble},
+    rc_len::Cint,
+    status::Ptr{Cuchar},
+    weights::Ptr{Cdouble},
+    ref_bits::Ptr{Cuint},
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    infeas_nnz::Cint,
+    ntotal::Cint,
+    add_seq::Cint,
+    scale_factor::Cdouble,
+    devex::Cdouble,
+    slack_mult::Cdouble,
+    tol::Cdouble,
+)::Cint
+    uc = Int(upd_cap)
+    nt = Int(ntotal)
+    nwords = (nt + 31) >> 5
+    nnz1 = clp_pcs_devex_section!(
+        PtrView(upd_val, uc),
+        ShiftedPtrView(upd_idx, uc),
+        Int(n_upd),
+        PtrView(rc, Int(rc_len)),
+        PtrView(status, nt),
+        PtrView(weights, nt),
+        PtrView(ref_bits, nwords),
+        PtrView(infeas, nt),
+        ShiftedPtrView(infeas_idx, nt),
+        Int(infeas_nnz),
+        Int(add_seq),
+        Float64(scale_factor),
+        Float64(devex),
+        Float64(slack_mult),
+        Float64(tol),
+    )
+    return Cint(nnz1)
+end
+
+Base.@ccallable function jclp_pcs_steepest_rows(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    other::Ptr{Cdouble},
+    rc::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    status::Ptr{Cuchar},
+    weights::Ptr{Cdouble},
+    ref_bits::Ptr{Cuint},
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    infeas_nnz::Cint,
+    scale_factor::Cdouble,
+    devex::Cdouble,
+    mode::Cint,
+    ref_in::Cdouble,
+    tol::Cdouble,
+)::Cint
+    uc = Int(upd_cap)
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    uv = PtrView(upd_val, uc)
+    ui = ShiftedPtrView(upd_idx, uc)
+    ov = PtrView(other, nr)
+    rcv = PtrView(rc, nr)
+    sv = PtrView(status, nt)
+    wv = PtrView(weights, nt)
+    infv = PtrView(infeas, nt)
+    infi = ShiftedPtrView(infeas_idx, nt)
+    if ref_bits != C_NULL
+        nwords = (nt + 31) >> 5
+        nnz1 = clp_pcs_steepest_rows!(uv, ui, Int(n_upd), ov, rcv, sv, wv, PtrView(ref_bits, nwords), infv, infi, Int(infeas_nnz), nc, Float64(scale_factor), Float64(devex), Int(mode), Float64(ref_in), Float64(tol))
+    else
+        nnz1 = clp_pcs_steepest_rows!(uv, ui, Int(n_upd), ov, rcv, sv, wv, nothing, infv, infi, Int(infeas_nnz), nc, Float64(scale_factor), Float64(devex), Int(mode), Float64(ref_in), Float64(tol))
+    end
+    return Cint(nnz1)
+end
+
+Base.@ccallable function jclp_pcs_steepest_cols_rc1(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    infeas_nnz::Cint,
+    ntotal::Cint,
+)::Cint
+    uc = Int(upd_cap)
+    nt = Int(ntotal)
+    return Cint(clp_pcs_steepest_cols_rc1!(
+        PtrView(upd_val, uc), ShiftedPtrView(upd_idx, uc), Int(n_upd),
+        PtrView(infeas, nt), ShiftedPtrView(infeas_idx, nt), Int(infeas_nnz),
+    ))
+end
+
+Base.@ccallable function jclp_pcs_steepest_cols_rc0(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    rc::Ptr{Cdouble},
+    ncols::Cint,
+    status::Ptr{Cuchar},
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    infeas_nnz::Cint,
+    ntotal::Cint,
+    tol::Cdouble,
+)::Cint
+    uc = Int(upd_cap)
+    nt = Int(ntotal)
+    return Cint(clp_pcs_steepest_cols_rc0!(
+        PtrView(upd_val, uc), ShiftedPtrView(upd_idx, uc), Int(n_upd),
+        PtrView(rc, Int(ncols)), PtrView(status, nt),
+        PtrView(infeas, nt), ShiftedPtrView(infeas_idx, nt), Int(infeas_nnz),
+        Float64(tol),
+    ))
+end
+
+Base.@ccallable function jclp_pcs_just_devex_section(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    weights::Ptr{Cdouble},
+    ref_bits::Ptr{Cuint},
+    ntotal::Cint,
+    add_seq::Cint,
+    negate_piv::Cint,
+    devex::Cdouble,
+)::Cvoid
+    uc = Int(upd_cap)
+    nt = Int(ntotal)
+    nwords = (nt + 31) >> 5
+    clp_pcs_just_devex_section!(
+        PtrView(upd_val, uc), ShiftedPtrView(upd_idx, uc), Int(n_upd),
+        PtrView(weights, nt), PtrView(ref_bits, nwords),
+        Int(add_seq), negate_piv != Cint(0), Float64(devex),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_pcs_just_steepest_rows(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    other::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    weights::Ptr{Cdouble},
+    ref_bits::Ptr{Cuint},
+    devex::Cdouble,
+    mode::Cint,
+    ref_in::Cdouble,
+)::Cvoid
+    uc = Int(upd_cap)
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nt = nr + nc
+    uv = PtrView(upd_val, uc)
+    ui = ShiftedPtrView(upd_idx, uc)
+    ov = PtrView(other, nr)
+    wv = PtrView(weights, nt)
+    if ref_bits != C_NULL
+        nwords = (nt + 31) >> 5
+        clp_pcs_just_steepest_rows!(uv, ui, Int(n_upd), ov, wv, PtrView(ref_bits, nwords), nc, Float64(devex), Int(mode), Float64(ref_in))
+    else
+        clp_pcs_just_steepest_rows!(uv, ui, Int(n_upd), ov, wv, nothing, nc, Float64(devex), Int(mode), Float64(ref_in))
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pcs_just_steepest_cols(
+    upd_val::Ptr{Cdouble},
+    upd_idx::Ptr{Cint},
+    n_upd::Cint,
+    upd_cap::Cint,
+    upd2_val::Ptr{Cdouble},
+    ntotal::Cint,
+    weights::Ptr{Cdouble},
+    ref_bits::Ptr{Cuint},
+    devex::Cdouble,
+    mode::Cint,
+    ref_in::Cdouble,
+)::Cvoid
+    uc = Int(upd_cap)
+    nt = Int(ntotal)
+    uv = PtrView(upd_val, uc)
+    ui = ShiftedPtrView(upd_idx, uc)
+    u2v = PtrView(upd2_val, uc)
+    wv = PtrView(weights, nt)
+    if ref_bits != C_NULL
+        nwords = (nt + 31) >> 5
+        clp_pcs_just_steepest_cols!(uv, ui, Int(n_upd), u2v, wv, PtrView(ref_bits, nwords), Float64(devex), Int(mode), Float64(ref_in))
+    else
+        clp_pcs_just_steepest_cols!(uv, ui, Int(n_upd), u2v, wv, nothing, Float64(devex), Int(mode), Float64(ref_in))
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_pcs_redo_infeasibilities(
+    infeas::Ptr{Cdouble},
+    infeas_idx::Ptr{Cint},
+    rc::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    tol::Cdouble,
+)::Cint
+    nt = Int(ntotal)
+    return Cint(clp_pcs_redo_infeasibilities!(
+        PtrView(infeas, nt), ShiftedPtrView(infeas_idx, nt),
+        PtrView(rc, nt), PtrView(status, nt), nt, Float64(tol),
+    ))
+end
+
+Base.@ccallable function jclp_pcs_unroll_weights(
+    weights::Ptr{Cdouble},
+    saved_val::Ptr{Cdouble},
+    saved_idx::Ptr{Cint},
+    nnz::Cint,
+    ntotal::Cint,
+    saved_cap::Cint,
+)::Cvoid
+    nt = Int(ntotal)
+    sc = Int(saved_cap)
+    clp_pcs_unroll_weights!(PtrView(weights, nt), PtrView(saved_val, sc), ShiftedPtrView(saved_idx, sc), Int(nnz))
+    return nothing
+end
+
+Base.@ccallable function jclp_pcs_looks_optimal_simple(
+    rc::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    tol::Cdouble,
+)::Cint
+    nt = Int(ntotal)
+    ok = clp_pcs_looks_optimal_simple(PtrView(rc, nt), PtrView(status, nt), nt, Float64(tol))
+    return Cint(ok ? 1 : 0)
+end
