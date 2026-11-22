@@ -558,3 +558,65 @@ Base.@ccallable function jclp_cf_go_sparse_build(
     cf_go_sparse_build!(st_ptr)
     return nothing
 end
+
+# --- B6: CoinMpsIO ---
+
+Base.@ccallable function jclp_mps_reader_pod_sizeof()::Cint
+    return Cint(sizeof(CoinMpsCardReaderPod))
+end
+
+Base.@ccallable function jclp_mps_osi_strtod(
+    ptr::Ptr{UInt8},
+    out_ptr::Ptr{Ptr{UInt8}},
+    fmt_type::Cint,
+    strings_allowed::Cint,
+    value_string::Ptr{UInt8},
+)::Cdouble
+    return mps_osi_strtod(ptr, out_ptr, Int32(fmt_type), strings_allowed != Cint(0), value_string)
+end
+
+Base.@ccallable function jclp_mps_read_to_next_section(
+    r_ptr::Ptr{CoinMpsCardReaderPod},
+)::Cint
+    return Cint(mps_read_to_next_section!(r_ptr))
+end
+
+Base.@ccallable function jclp_mps_next_field(
+    r_ptr::Ptr{CoinMpsCardReaderPod},
+)::Cint
+    return Cint(mps_next_field!(r_ptr))
+end
+
+Base.@ccallable function jclp_mps_clean_card(
+    r_ptr::Ptr{CoinMpsCardReaderPod},
+)::Cint
+    return Cint(mps_clean_card!(r_ptr))
+end
+
+Base.@ccallable function jclp_mps_start_hash(
+    names::Ptr{Ptr{UInt8}},
+    number::Cint,
+    hash_tbl::Ptr{CoinHashLinkPod},
+)::Cvoid
+    mps_start_hash!(names, Int32(number), hash_tbl)
+    return nothing
+end
+
+Base.@ccallable function jclp_mps_find_hash(
+    name::Ptr{UInt8},
+    names::Ptr{Ptr{UInt8}},
+    number::Cint,
+    hash_tbl::Ptr{CoinHashLinkPod},
+)::Cint
+    return Cint(mps_find_hash(name, names, Int32(number), hash_tbl))
+end
+
+Base.@ccallable function jclp_mps_convert_double(
+    section::Cint,
+    format_type::Cint,
+    value::Cdouble,
+    out::Ptr{UInt8},
+)::Cvoid
+    coin_convert_double!(Int32(section), Int32(format_type), value, out)
+    return nothing
+end
