@@ -45,3 +45,49 @@ end
 @inline function _lu_get(id::Int32)::SparseLU
     @inbounds return _SPARSE_LU_POOL[Int(id)]
 end
+
+# --- B10: ClpFactorization opaque handle pool ---
+
+const _CLP_FACT_POOL = ClpFactorization[]
+const _CLP_FACT_FREE = Int32[]
+
+function _cf_handle_create()::Int32
+    if !isempty(_CLP_FACT_FREE)
+        id = pop!(_CLP_FACT_FREE)
+        @inbounds _CLP_FACT_POOL[Int(id)] = ClpFactorization()
+        return id
+    end
+    push!(_CLP_FACT_POOL, ClpFactorization())
+    return Int32(length(_CLP_FACT_POOL))
+end
+
+function _cf_handle_copy(src_id::Int32)::Int32
+    @inbounds src = _CLP_FACT_POOL[Int(src_id)]
+    dup = copy_clp_factorization(src)
+    if !isempty(_CLP_FACT_FREE)
+        id = pop!(_CLP_FACT_FREE)
+        @inbounds _CLP_FACT_POOL[Int(id)] = dup
+        return id
+    end
+    push!(_CLP_FACT_POOL, dup)
+    return Int32(length(_CLP_FACT_POOL))
+end
+
+function _cf_handle_assign!(dst_id::Int32, src_id::Int32)::Nothing
+    if dst_id != src_id
+        @inbounds _CLP_FACT_POOL[Int(dst_id)] = copy_clp_factorization(_CLP_FACT_POOL[Int(src_id)])
+    end
+    return nothing
+end
+
+function _cf_handle_destroy!(id::Int32)::Nothing
+    if id > Int32(0) && Int(id) <= length(_CLP_FACT_POOL)
+        @inbounds _CLP_FACT_POOL[Int(id)] = ClpFactorization()
+        push!(_CLP_FACT_FREE, id)
+    end
+    return nothing
+end
+
+@inline function _cf_get(id::Int32)::ClpFactorization
+    @inbounds return _CLP_FACT_POOL[Int(id)]
+end

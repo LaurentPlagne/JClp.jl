@@ -3469,3 +3469,630 @@ Base.@ccallable function jclp_nlc_refresh_one(
     )
     return nothing
 end
+
+# ==============================================================================
+# B10: ClpFactorization (direct pure-Julia SparseLU integration)
+# ==============================================================================
+
+Base.@ccallable function jclp_clpf_create()::Cint
+    return Cint(_cf_handle_create())
+end
+
+Base.@ccallable function jclp_clpf_copy(src_id::Cint)::Cint
+    return Cint(_cf_handle_copy(Int32(src_id)))
+end
+
+Base.@ccallable function jclp_clpf_assign(dst_id::Cint, src_id::Cint)::Cvoid
+    _cf_handle_assign!(Int32(dst_id), Int32(src_id))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_destroy(id::Cint)::Cvoid
+    _cf_handle_destroy!(Int32(id))
+    return nothing
+end
+
+# --- Scalar getters / setters (O(1) concrete pool lookup) ---
+
+Base.@ccallable function jclp_clpf_get_int(id::Cint, field::Cint)::Cint
+    cf = _cf_get(Int32(id))
+    lu = cf.lu
+    f = Int(field)
+    if f == 0;  return Cint(lu.total_elements)
+    elseif f == 1;  return Cint(lu.max_pivots)
+    elseif f == 2;  return Cint(lu.npivots)
+    elseif f == 3;  return Cint(lu.sparse_threshold)
+    elseif f == 4;  return Cint(lu.status)
+    elseif f == 5;  return Cint(lu.ndense)
+    elseif f == 6;  return Cint(lu.len_u)
+    elseif f == 7;  return Cint(lu.len_l)
+    elseif f == 8;  return Cint(lu.len_r)
+    elseif f == 9;  return Cint(cf.message_level)
+    elseif f == 10; return Cint(lu.nrows)
+    elseif f == 11; return Cint(lu.dense_threshold)
+    elseif f == 12; return Cint(cf.persistence_flag)
+    elseif f == 13; return Cint(lu.max_rows_extra)
+    elseif f == 14; return Cint(lu.max_cols_extra)
+    elseif f == 15; return Cint(lu.bias_lu)
+    elseif f == 16; return Cint(lu.do_forrest_tomlin ? 1 : 0)
+    else;           return Cint(0)
+    end
+end
+
+Base.@ccallable function jclp_clpf_set_int(id::Cint, field::Cint, val::Cint)::Cvoid
+    cf = _cf_get(Int32(id))
+    lu = cf.lu
+    f = Int(field)
+    v = Int(val)
+    if f == 1;      lu.max_pivots = v
+    elseif f == 2;  lu.npivots = v
+    elseif f == 3;  lu.sparse_threshold = v
+    elseif f == 4;  lu.status = v
+    elseif f == 9;  cf.message_level = v
+    elseif f == 10; lu.nrows = v
+    elseif f == 11; lu.dense_threshold = v
+    elseif f == 12; cf.persistence_flag = v
+    elseif f == 15; lu.bias_lu = v
+    elseif f == 16; lu.do_forrest_tomlin = (v != 0)
+    elseif f == 17; cf.do_statistics = (v != 0)
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_get_double(id::Cint, field::Cint)::Cdouble
+    cf = _cf_get(Int32(id))
+    lu = cf.lu
+    f = Int(field)
+    if f == 0;      return Cdouble(lu.area_factor)
+    elseif f == 1;  return Cdouble(lu.zero_tol)
+    elseif f == 2;  return Cdouble(lu.pivot_tol)
+    elseif f == 3;  return Cdouble(clp_fact_adjusted_area_factor(cf))
+    elseif f == 4;  return Cdouble(lu.relax_check)
+    else;           return Cdouble(0.0)
+    end
+end
+
+Base.@ccallable function jclp_clpf_set_double(id::Cint, field::Cint, val::Cdouble)::Cvoid
+    cf = _cf_get(Int32(id))
+    lu = cf.lu
+    f = Int(field)
+    v = Float64(val)
+    if f == 0;      lu.area_factor = v
+    elseif f == 1;  lu.zero_tol = v
+    elseif f == 2;  lu.pivot_tol = v
+    elseif f == 4;  lu.relax_check = v
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_clear_arrays(id::Cint)::Cvoid
+    clp_fact_clear_arrays!(_cf_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_almost_destructor(id::Cint)::Cvoid
+    clp_fact_almost_destructor!(_cf_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_set_default_values(id::Cint)::Cvoid
+    clp_fact_set_default_values!(_cf_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_adjust_area_factor(id::Cint)::Cvoid
+    clp_fact_adjust_area_factor!(_cf_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_time_to_refactorize(id::Cint)::Cint
+    return Cint(clp_fact_time_to_refactorize!(_cf_get(Int32(id))) ? 1 : 0)
+end
+
+Base.@ccallable function jclp_clpf_safer_tolerances(
+    id::Cint,
+    zero_val::Cdouble,
+    pivot_val::Cdouble,
+)::Cvoid
+    clp_fact_safer_tolerances!(_cf_get(Int32(id)), Float64(zero_val), Float64(pivot_val))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_go_sparse(id::Cint)::Cvoid
+    clp_fact_go_sparse!(_cf_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_clean_up(id::Cint)::Cvoid
+    clp_fact_clean_up!(_cf_get(Int32(id)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_get_weights(
+    id::Cint,
+    weights_ptr::Ptr{Cint},
+    nrows::Cint,
+)::Cvoid
+    clp_fact_get_weights!(_cf_get(Int32(id)), PtrView(weights_ptr, Int(nrows)))
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_empty_rows(
+    id::Cint,
+    n_to_empty::Cint,
+    which_0based::Ptr{Cint},
+)::Cvoid
+    n = Int(n_to_empty)
+    if n > 0
+        clp_fact_empty_rows!(_cf_get(Int32(id)), n, ShiftedPtrView(which_0based, n))
+    end
+    return nothing
+end
+
+# --- Direct zero-copy factorize from ClpPackedMatrix ---
+
+@inline function _copy_lu_permutes_0based!(
+    lu::SparseLU,
+    out_permute0::Ptr{Cint},
+    out_pivot_col0::Ptr{Cint},
+    st::Int,
+)::Nothing
+    nr = lu.nrows
+    nc = lu.ncols
+    if st == 0
+        if out_permute0 != C_NULL
+            p_out = PtrView(out_permute0, nr)
+            @inbounds for i in 1:nr
+                p_out[i] = lu.permute[i] - Int32(1)
+            end
+        end
+        if out_pivot_col0 != C_NULL
+            pc_out = PtrView(out_pivot_col0, nr)
+            @inbounds for i in 1:nr
+                pc_out[i] = lu.pivot_col[i] - Int32(1)
+            end
+        end
+    elseif st == -1
+        if out_pivot_col0 != C_NULL
+            pc_out = PtrView(out_pivot_col0, nc)
+            @inbounds for i in 1:nc
+                v = lu.pivot_col[i]
+                pc_out[i] = v > LU_NO_LINK ? (v - Int32(1)) : Int32(-1)
+            end
+        end
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_factorize_packed(
+    id::Cint,
+    nrows::Cint,
+    ncols_model::Cint,
+    n_row_basic::Cint,
+    n_basic::Cint,
+    pivot_temp_0::Ptr{Cint},
+    mat_starts_0::Ptr{Cint},
+    mat_lengths::Ptr{Cint},
+    mat_indices_0::Ptr{Cint},
+    mat_elements::Ptr{Cdouble},
+    mat_nnz_cap::Cint,
+    has_zeros::Cint,
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    number_iterations::Cint,
+    n_times_round::Cint,
+    pivot_variable_0::Ptr{Cint},
+    use_number_rows::Cint,
+    out_permute0::Ptr{Cint},
+    out_pivot_col0::Ptr{Cint},
+)::Cint
+    cf = _cf_get(Int32(id))
+    nr = Int(nrows)
+    nc_m = Int(ncols_model)
+    nrb = Int(n_row_basic)
+    nb = Int(n_basic)
+    nnz_c = Int(mat_nnz_cap)
+    hz = has_zeros != Cint(0)
+    nit = Int(number_iterations)
+    ntr = Int(n_times_round)
+    unr = Int(use_number_rows)
+
+    pt = ShiftedPtrView(pivot_temp_0, max(nb, unr))
+    ms = ShiftedPtrView(mat_starts_0, nc_m + 1)
+    ml = PtrView(mat_lengths, nc_m)
+    mi = ShiftedPtrView(mat_indices_0, nnz_c)
+    me = PtrView(mat_elements, nnz_c)
+    pv = ShiftedPtrView(pivot_variable_0, max(nr, unr))
+
+    if row_scale != C_NULL && col_scale != C_NULL
+        st = clp_fact_factorize_packed!(
+            cf, nr, nc_m, nrb, nb, pt, ms, ml, mi, me, hz,
+            PtrView(row_scale, nr), PtrView(col_scale, nc_m),
+            nit, ntr, pv, unr,
+        )
+    else
+        st = clp_fact_factorize_packed!(
+            cf, nr, nc_m, nrb, nb, pt, ms, ml, mi, me, hz,
+            nothing, nothing,
+            nit, ntr, pv, unr,
+        )
+    end
+    _copy_lu_permutes_0based!(cf.lu, out_permute0, out_pivot_col0, st)
+    return Cint(st)
+end
+
+Base.@ccallable function jclp_clpf_factorize_csc(
+    id::Cint,
+    nrows::Cint,
+    ncols::Cint,
+    nnz::Cint,
+    area_l::Cint,
+    area_u::Cint,
+    start_col_0::Ptr{Cint},
+    len_col::Ptr{Cint},
+    idx_row_0::Ptr{Cint},
+    el_u::Ptr{Cdouble},
+    len_row::Ptr{Cint},
+    state::Cint,
+    out_pivot_col0::Ptr{Cint},
+)::Cint
+    cf = _cf_get(Int32(id))
+    nr = Int(nrows)
+    nc = Int(ncols)
+    nz = Int(nnz)
+    st = clp_fact_factorize_csc!(
+        cf, nr, nc, nz, Int(area_l), Int(area_u),
+        ShiftedPtrView(start_col_0, nc + 1),
+        PtrView(len_col, nc),
+        ShiftedPtrView(idx_row_0, nz),
+        PtrView(el_u, nz),
+        PtrView(len_row, nr),
+        Int(state),
+    )
+    if st == -1 && out_pivot_col0 != C_NULL
+        _copy_lu_permutes_0based!(cf.lu, C_NULL, out_pivot_col0, st)
+    end
+    return Cint(st)
+end
+
+Base.@ccallable function jclp_clpf_reorder_and_finalize(
+    id::Cint,
+    ncols_model::Cint,
+    n_row_basic::Cint,
+    use_number_rows::Cint,
+    pivot_temp_0::Ptr{Cint},
+    pivot_variable_0::Ptr{Cint},
+    do_check_sparse::Cint,
+    out_permute0::Ptr{Cint},
+    out_pivot_col0::Ptr{Cint},
+)::Cvoid
+    cf = _cf_get(Int32(id))
+    unr = Int(use_number_rows)
+    clp_fact_reorder_and_finalize!(
+        cf, Int(ncols_model), Int(n_row_basic), unr,
+        ShiftedPtrView(pivot_temp_0, unr),
+        ShiftedPtrView(pivot_variable_0, max(cf.lu.nrows, unr)),
+        do_check_sparse != Cint(0),
+    )
+    _copy_lu_permutes_0based!(cf.lu, out_permute0, out_pivot_col0, 0)
+    return nothing
+end
+
+Base.@ccallable function jclp_clpf_export_for_network(
+    id::Cint,
+    out_piv_reg::Ptr{Cdouble},
+    out_perm_back::Ptr{Cint},
+    out_start_col_u::Ptr{Cint},
+    out_len_col_u::Ptr{Cint},
+    out_idx_row_u::Ptr{Cint},
+    out_el_u::Ptr{Cdouble},
+)::Cvoid
+    lu = _cf_get(Int32(id)).lu
+    nr = lu.nrows
+    nz = lu.len_u
+    pr = PtrView(out_piv_reg, nr)
+    pb = PtrView(out_perm_back, nr)
+    sc = PtrView(out_start_col_u, nr + 1)
+    lc = PtrView(out_len_col_u, nr)
+    ir = PtrView(out_idx_row_u, nz)
+    eu = PtrView(out_el_u, nz)
+    @inbounds for i in 1:nr
+        pr[i] = lu.pivot_region[i]
+        pb[i] = lu.permute_back[i] - Int32(1)
+        sc[i] = lu.start_col_u[i] - Int32(1)
+        lc[i] = lu.len_col_u[i]
+    end
+    @inbounds for k in 1:nz
+        ir[k] = lu.index_row_u[k] - Int32(1)
+        eu[k] = lu.element_u[k]
+    end
+    return nothing
+end
+
+# --- Hot simplex operations ---
+
+Base.@ccallable function jclp_clpf_replace_column(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_cap::Cint,
+    tab_el::Ptr{Cdouble},
+    tab_idx::Ptr{Cint},
+    tab_nnz::Cint,
+    tab_cap::Cint,
+    tab_packed::Cint,
+    pivot_row_0::Cint,
+    pivot_check::Cdouble,
+    check_before::Cint,
+    n_new::Cint,
+    n_old::Cint,
+    io_permute0::Ptr{Cint},
+    io_pivot_col0::Ptr{Cint},
+)::Cint
+    cf = _cf_get(Int32(id))
+    lu = cf.lu
+    pr = Int(pivot_row_0) + 1
+    if lu.do_forrest_tomlin
+        ret = clp_fact_replace_column!(
+            cf,
+            PtrView(w_el, Int(w_cap)),
+            PtrView(w_idx, Int(w_cap)),
+            PtrView(w_el, 0),
+            PtrView(w_idx, 0),
+            0, false,
+            pr, Float64(pivot_check), check_before != Cint(0),
+            Int(n_new), Int(n_old),
+        )
+        if ret == 0
+            # Keep C++ 0-based permute/pivotColumn mirrors synchronized in O(1)
+            new_row = lu.nrows_extra
+            @inbounds begin
+                if io_permute0 != C_NULL
+                    p0 = PtrView(io_permute0, new_row + 1)
+                    p0[new_row] = lu.permute[new_row] - Int32(1)
+                    p0[new_row + 1] = Int32(-1)
+                end
+                if io_pivot_col0 != C_NULL
+                    pc0 = PtrView(io_pivot_col0, max(pr, new_row))
+                    pc0[pr] = lu.pivot_col[pr] - Int32(1)
+                end
+            end
+        end
+    else
+        tn = Int(tab_nnz)
+        ti = PtrView(tab_idx, Int(tab_cap))
+        shift_to_1based!(ti, tn)
+        ret = clp_fact_replace_column!(
+            cf,
+            PtrView(w_el, Int(w_cap)),
+            PtrView(w_idx, Int(w_cap)),
+            PtrView(tab_el, Int(tab_cap)),
+            ti, tn, tab_packed != Cint(0),
+            pr, Float64(pivot_check), check_before != Cint(0),
+            Int(n_new), Int(n_old),
+        )
+        shift_to_0based!(ti, tn)
+        if ret == 0 && io_pivot_col0 != C_NULL
+            p_slot = lu.nrows + lu.npivots
+            pc0 = PtrView(io_pivot_col0, p_slot)
+            @inbounds pc0[p_slot] = lu.pivot_col[p_slot] - Int32(1)
+        end
+    end
+    return Cint(ret)
+end
+
+Base.@ccallable function jclp_clpf_update_column_ft(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_cap::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+)::Cint
+    cf = _cf_get(Int32(id))
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    rn = Int(r_nnz)
+    shift_to_1based!(ri, rn)
+    res = clp_fact_update_column_ft!(cf, wv, wi, rv, ri, rn, r_packed != Cint(0))
+    shift_to_0based!(ri, abs(res))
+    return Cint(res)
+end
+
+Base.@ccallable function jclp_clpf_update_column(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_nnz::Cint,
+    w_cap::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+    no_permute::Cint,
+)::Cint
+    cf = _cf_get(Int32(id))
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    np = no_permute != Cint(0)
+    wn = Int(w_nnz)
+    rn = Int(r_nnz)
+    if np
+        shift_to_1based!(wi, wn)
+    else
+        shift_to_1based!(ri, rn)
+    end
+    nnz_out = clp_fact_update_column!(cf, wv, wi, wn, rv, ri, rn, r_packed != Cint(0), np)
+    if np
+        shift_to_0based!(wi, nnz_out)
+    else
+        shift_to_0based!(ri, nnz_out)
+    end
+    return Cint(nnz_out)
+end
+
+Base.@ccallable function jclp_clpf_update_column_debug(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_nnz::Cint,
+    w_cap::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+    no_permute::Cint,
+)::Cint
+    cf = _cf_get(Int32(id))
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    np = no_permute != Cint(0)
+    wn = Int(w_nnz)
+    rn = Int(r_nnz)
+    if np
+        shift_to_1based!(wi, wn)
+    else
+        shift_to_1based!(ri, rn)
+    end
+    nnz_out = clp_fact_update_column_for_debug!(cf, wv, wi, wn, rv, ri, rn, r_packed != Cint(0), np)
+    if np
+        shift_to_0based!(wi, nnz_out)
+    else
+        shift_to_0based!(ri, nnz_out)
+    end
+    return Cint(nnz_out)
+end
+
+Base.@ccallable function jclp_clpf_update_two_columns_ft(
+    id::Cint,
+    r1_el::Ptr{Cdouble},
+    r1_idx::Ptr{Cint},
+    r1_cap::Cint,
+    r2_el::Ptr{Cdouble},
+    r2_idx::Ptr{Cint},
+    r2_nnz::Cint,
+    r2_cap::Cint,
+    r2_packed::Cint,
+    r3_el::Ptr{Cdouble},
+    r3_idx::Ptr{Cint},
+    r3_nnz::Cint,
+    r3_cap::Cint,
+    r3_packed::Cint,
+    no_permute_r3::Cint,
+    out_r3_nnz::Ptr{Cint},
+)::Cint
+    cf = _cf_get(Int32(id))
+    v1 = PtrView(r1_el, Int(r1_cap))
+    i1 = PtrView(r1_idx, Int(r1_cap))
+    v2 = PtrView(r2_el, Int(r2_cap))
+    i2 = PtrView(r2_idx, Int(r2_cap))
+    v3 = PtrView(r3_el, Int(r3_cap))
+    i3 = PtrView(r3_idx, Int(r3_cap))
+    n2 = Int(r2_nnz)
+    n3 = Int(r3_nnz)
+    shift_to_1based!(i2, n2)
+    shift_to_1based!(i3, n3)
+    out2, out3 = clp_fact_update_two_columns_ft!(
+        cf, v1, i1,
+        v2, i2, n2, r2_packed != Cint(0),
+        v3, i3, n3, r3_packed != Cint(0),
+        no_permute_r3 != Cint(0),
+    )
+    shift_to_0based!(i2, abs(out2))
+    shift_to_0based!(i3, out3)
+    if out_r3_nnz != C_NULL
+        unsafe_store!(out_r3_nnz, Cint(out3))
+    end
+    return Cint(out2)
+end
+
+Base.@ccallable function jclp_clpf_update_column_transpose(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_nnz::Cint,
+    w_cap::Cint,
+    w_packed::Cint,
+    r_el::Ptr{Cdouble},
+    r_idx::Ptr{Cint},
+    r_nnz::Cint,
+    r_cap::Cint,
+    r_packed::Cint,
+)::Cint
+    cf = _cf_get(Int32(id))
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    rv = PtrView(r_el, Int(r_cap))
+    ri = PtrView(r_idx, Int(r_cap))
+    wn = Int(w_nnz)
+    rn = Int(r_nnz)
+    if wn > 0 && w_packed == Cint(0)
+        shift_to_1based!(wi, wn)
+    end
+    shift_to_1based!(ri, rn)
+    nnz_out = clp_fact_update_column_transpose!(cf, wv, wi, wn, w_packed != Cint(0), rv, ri, rn, r_packed != Cint(0))
+    shift_to_0based!(ri, nnz_out)
+    return Cint(nnz_out)
+end
+
+Base.@ccallable function jclp_clpf_update_two_columns_transpose(
+    id::Cint,
+    w_el::Ptr{Cdouble},
+    w_idx::Ptr{Cint},
+    w_nnz::Cint,
+    w_cap::Cint,
+    w_packed::Cint,
+    r2_el::Ptr{Cdouble},
+    r2_idx::Ptr{Cint},
+    r2_nnz::Cint,
+    r2_cap::Cint,
+    r2_packed::Cint,
+    r3_el::Ptr{Cdouble},
+    r3_idx::Ptr{Cint},
+    r3_nnz::Cint,
+    r3_cap::Cint,
+    r3_packed::Cint,
+    out_nnz2::Ptr{Cint},
+    out_nnz3::Ptr{Cint},
+)::Cvoid
+    cf = _cf_get(Int32(id))
+    wv = PtrView(w_el, Int(w_cap))
+    wi = PtrView(w_idx, Int(w_cap))
+    v2 = PtrView(r2_el, Int(r2_cap))
+    i2 = PtrView(r2_idx, Int(r2_cap))
+    v3 = PtrView(r3_el, Int(r3_cap))
+    i3 = PtrView(r3_idx, Int(r3_cap))
+    wn = Int(w_nnz)
+    n2 = Int(r2_nnz)
+    n3 = Int(r3_nnz)
+    if wn > 0 && w_packed == Cint(0)
+        shift_to_1based!(wi, wn)
+    end
+    shift_to_1based!(i2, n2)
+    shift_to_1based!(i3, n3)
+    out2, out3 = clp_fact_update_two_columns_transpose!(
+        cf, wv, wi, wn, w_packed != Cint(0),
+        v2, i2, n2, r2_packed != Cint(0),
+        v3, i3, n3, r3_packed != Cint(0),
+    )
+    shift_to_0based!(i2, out2)
+    shift_to_0based!(i3, out3)
+    if out_nnz2 != C_NULL
+        unsafe_store!(out_nnz2, Cint(out2))
+    end
+    if out_nnz3 != C_NULL
+        unsafe_store!(out_nnz3, Cint(out3))
+    end
+    return nothing
+end

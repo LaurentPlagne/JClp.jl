@@ -212,7 +212,7 @@ end
 function SparseLU()
     return SparseLU(
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 0, 0,
-        1.0e-13, 0.1, 1.0, -1.0, 1.0, 0, 0, 71, 1, 4, 0.0, true, true, false, false, false, false, false, false,
+        1.0e-13, 0.1, 1.0, -1.0, 0.0, 0, 0, 71, 2, 4, -1.0, true, true, false, false, false, false, false, false,
         0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         Float64[], Int32[], Int32[], Int32[], Int32[], Int32[], Int32[], Int32[], Int32[],
