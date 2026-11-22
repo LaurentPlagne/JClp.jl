@@ -5298,3 +5298,415 @@ Base.@ccallable function jclp_primal_clear_all(
         PtrView(status, nt),
     ))
 end
+
+# ==============================================================================
+# Phase B — B11c-1: ClpSimplexProgress + ClpSimplex autonomous kernels
+# ==============================================================================
+
+Base.@ccallable function jclp_progress_reset(
+    objective::Ptr{Cdouble},
+    infeasibility::Ptr{Cdouble},
+    real_infeasibility::Ptr{Cdouble},
+    number_infeasibilities::Ptr{Cint},
+    iteration_number::Ptr{Cint},
+    in_arr::Ptr{Cint},
+    out_arr::Ptr{Cint},
+    way_arr::Ptr{Cchar},
+    algorithm::Cint,
+)::Cvoid
+    clp_progress_reset!(
+        PtrView(objective, CLP_PROGRESS),
+        PtrView(infeasibility, CLP_PROGRESS),
+        PtrView(real_infeasibility, CLP_PROGRESS),
+        PtrView(number_infeasibilities, CLP_PROGRESS),
+        PtrView(iteration_number, CLP_PROGRESS),
+        PtrView(in_arr, CLP_CYCLE),
+        PtrView(out_arr, CLP_CYCLE),
+        PtrView(way_arr, CLP_CYCLE),
+        Int(algorithm),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_progress_cycle(
+    in_arr::Ptr{Cint},
+    out_arr::Ptr{Cint},
+    way_arr::Ptr{Cchar},
+    in_seq::Cint,
+    out_seq::Cint,
+    way_in::Cint,
+    way_out::Cint,
+)::Cint
+    return Cint(clp_progress_cycle!(
+        PtrView(in_arr, CLP_CYCLE),
+        PtrView(out_arr, CLP_CYCLE),
+        PtrView(way_arr, CLP_CYCLE),
+        Int32(in_seq),
+        Int32(out_seq),
+        Int(way_in),
+        Int(way_out),
+    ))
+end
+
+Base.@ccallable function jclp_progress_looping_step(
+    objective_hist::Ptr{Cdouble},
+    infeas_hist::Ptr{Cdouble},
+    real_infeas_hist::Ptr{Cdouble},
+    num_infeas_hist::Ptr{Cint},
+    iter_num_hist::Ptr{Cint},
+    in_arr::Ptr{Cint},
+    out_arr::Ptr{Cint},
+    way_arr::Ptr{Cchar},
+    algorithm::Cint,
+    objective::Cdouble,
+    infeasibility::Cdouble,
+    real_infeasibility::Cdouble,
+    number_infeasibilities::Cint,
+    iteration_number::Cint,
+    nrows::Cint,
+    ncols::Cint,
+    progress_flag::Cint,
+    special_options::Cint,
+    matrix_type::Cint,
+    io_number_times::Ptr{Cint},
+    io_number_bad_times::Ptr{Cint},
+    io_number_really_bad_times::Ptr{Cint},
+    io_force_factorization::Ptr{Cint},
+    out_action::Ptr{Cint},
+    out_number_matched::Ptr{Cint},
+    out_matched_mask::Ptr{Cint},
+    out_flag_seq::Ptr{Cint},
+)::Cint
+    ret, act, nmatch, mmask, ntimes, nbad, nrbad, ffac, fseq = clp_progress_looping_step!(
+        PtrView(objective_hist, CLP_PROGRESS),
+        PtrView(infeas_hist, CLP_PROGRESS),
+        PtrView(real_infeas_hist, CLP_PROGRESS),
+        PtrView(num_infeas_hist, CLP_PROGRESS),
+        PtrView(iter_num_hist, CLP_PROGRESS),
+        PtrView(in_arr, CLP_CYCLE),
+        PtrView(out_arr, CLP_CYCLE),
+        PtrView(way_arr, CLP_CYCLE),
+        Int(algorithm),
+        Float64(objective),
+        Float64(infeasibility),
+        Float64(real_infeasibility),
+        Int(number_infeasibilities),
+        Int(iteration_number),
+        Int(nrows),
+        Int(ncols),
+        progress_flag != Cint(0),
+        Int(special_options),
+        Int(matrix_type),
+        Int(unsafe_load(io_number_times)),
+        Int(unsafe_load(io_number_bad_times)),
+        Int(unsafe_load(io_number_really_bad_times)),
+        Int(unsafe_load(io_force_factorization)),
+    )
+    unsafe_store!(io_number_times, Cint(ntimes))
+    unsafe_store!(io_number_bad_times, Cint(nbad))
+    unsafe_store!(io_number_really_bad_times, Cint(nrbad))
+    unsafe_store!(io_force_factorization, Cint(ffac))
+    unsafe_store!(out_action, Cint(act))
+    unsafe_store!(out_number_matched, Cint(nmatch))
+    unsafe_store!(out_matched_mask, Cint(mmask))
+    unsafe_store!(out_flag_seq, Cint(fseq))
+    return Cint(ret)
+end
+
+Base.@ccallable function jclp_clean_status(
+    status::Ptr{Cuchar},
+    row_act::Ptr{Cdouble},
+    row_lo::Ptr{Cdouble},
+    row_hi::Ptr{Cdouble},
+    col_act::Ptr{Cdouble},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    primal_tol::Cdouble,
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    clp_clean_status!(
+        PtrView(status, nr + nc),
+        PtrView(row_act, nr),
+        PtrView(row_lo, nr),
+        PtrView(row_hi, nr),
+        PtrView(col_act, nc),
+        PtrView(col_lo, nc),
+        PtrView(col_hi, nc),
+        nr,
+        nc,
+        Float64(primal_tol),
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_check_primal_solution(
+    row_act::Ptr{Cdouble},
+    row_obj::Ptr{Cdouble},
+    row_lo::Ptr{Cdouble},
+    row_hi::Ptr{Cdouble},
+    col_act::Ptr{Cdouble},
+    col_obj::Ptr{Cdouble},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    nrows::Cint,
+    ncols::Cint,
+    primal_tol::Cdouble,
+    largest_primal_err::Cdouble,
+    has_rhs_offset::Cint,
+    nonlinear_offset::Cdouble,
+    obj_scale::Cdouble,
+    rhs_scale::Cdouble,
+    out_obj_val::Ptr{Cdouble},
+    out_sum_inf::Ptr{Cdouble},
+    out_sum_rel::Ptr{Cdouble},
+    out_num_inf::Ptr{Cint},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    obj_val, sum_inf, sum_rel, num_inf = clp_check_primal_solution(
+        PtrView(row_act, nr),
+        PtrView(row_obj, nr),
+        PtrView(row_lo, nr),
+        PtrView(row_hi, nr),
+        PtrView(col_act, nc),
+        PtrView(col_obj, nc),
+        PtrView(col_lo, nc),
+        PtrView(col_hi, nc),
+        ShiftedPtrView(pivot_var, nr),
+        nr,
+        nc,
+        Float64(primal_tol),
+        Float64(largest_primal_err),
+        has_rhs_offset != Cint(0),
+        Float64(nonlinear_offset),
+        Float64(obj_scale),
+        Float64(rhs_scale),
+    )
+    unsafe_store!(out_obj_val, obj_val)
+    unsafe_store!(out_sum_inf, sum_inf)
+    unsafe_store!(out_sum_rel, sum_rel)
+    unsafe_store!(out_num_inf, Cint(num_inf))
+    return nothing
+end
+
+Base.@ccallable function jclp_check_dual_solution(
+    col_act::Ptr{Cdouble},
+    col_obj::Ptr{Cdouble},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    col_dj::Ptr{Cdouble},
+    row_act::Ptr{Cdouble},
+    row_obj::Ptr{Cdouble},
+    row_lo::Ptr{Cdouble},
+    row_hi::Ptr{Cdouble},
+    row_dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    nrows::Cint,
+    ncols::Cint,
+    primal_tol::Cdouble,
+    dual_tol::Cdouble,
+    largest_dual_err::Cdouble,
+    algorithm::Cint,
+    io_first_free_0based::Ptr{Cint},
+    last_iter_num0::Cint,
+    nonlinear_offset::Cdouble,
+    obj_scale::Cdouble,
+    rhs_scale::Cdouble,
+    out_obj_val::Ptr{Cdouble},
+    out_sum_dual_inf::Ptr{Cdouble},
+    out_sum_rel_dual_inf::Ptr{Cdouble},
+    out_num_dual_inf::Ptr{Cint},
+    out_num_dual_inf_no_free::Ptr{Cint},
+    out_best_imp::Ptr{Cdouble},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    ff0 = Int(unsafe_load(io_first_free_0based))
+    ff1 = ff0 >= 0 ? (ff0 + 1) : 0
+    obj_val, sum_d, sum_rd, num_d, num_dnf, best_imp, ff_out = clp_check_dual_solution(
+        PtrView(col_act, nc),
+        PtrView(col_obj, nc),
+        PtrView(col_lo, nc),
+        PtrView(col_hi, nc),
+        PtrView(col_dj, nc),
+        PtrView(row_act, nr),
+        PtrView(row_obj, nr),
+        PtrView(row_lo, nr),
+        PtrView(row_hi, nr),
+        PtrView(row_dj, nr),
+        PtrView(status, nr + nc),
+        nr,
+        nc,
+        Float64(primal_tol),
+        Float64(dual_tol),
+        Float64(largest_dual_err),
+        Int(algorithm),
+        ff1,
+        Int(last_iter_num0),
+        Float64(nonlinear_offset),
+        Float64(obj_scale),
+        Float64(rhs_scale),
+    )
+    unsafe_store!(out_obj_val, obj_val)
+    unsafe_store!(out_sum_dual_inf, sum_d)
+    unsafe_store!(out_sum_rel_dual_inf, sum_rd)
+    unsafe_store!(out_num_dual_inf, Cint(num_d))
+    unsafe_store!(out_num_dual_inf_no_free, Cint(num_dnf))
+    unsafe_store!(out_best_imp, best_imp)
+    unsafe_store!(io_first_free_0based, Cint(ff_out > 0 ? (ff_out - 1) : -1))
+    return nothing
+end
+
+Base.@ccallable function jclp_check_both_solutions(
+    solution::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    ntotal::Cint,
+    primal_tol::Cdouble,
+    dual_tol::Cdouble,
+    largest_primal_err::Cdouble,
+    largest_dual_err::Cdouble,
+    algorithm::Cint,
+    io_more_special_options::Ptr{Cint},
+    io_first_free_0based::Ptr{Cint},
+    last_iter_num0::Cint,
+    nonlinear_offset::Cdouble,
+    obj_scale::Cdouble,
+    rhs_scale::Cdouble,
+    out_obj_val::Ptr{Cdouble},
+    out_sum_p_inf::Ptr{Cdouble},
+    out_sum_rel_p_inf::Ptr{Cdouble},
+    out_num_p_inf::Ptr{Cint},
+    out_sum_d_inf::Ptr{Cdouble},
+    out_sum_rel_d_inf::Ptr{Cdouble},
+    out_num_d_inf::Ptr{Cint},
+    out_num_d_inf_no_free::Ptr{Cint},
+    out_best_imp::Ptr{Cdouble},
+)::Cvoid
+    nt = Int(ntotal)
+    ff0 = Int(unsafe_load(io_first_free_0based))
+    ff1 = ff0 >= 0 ? (ff0 + 1) : 0
+    obj_val, sum_p, sum_rp, num_p, sum_d, sum_rd, num_d, num_dnf, best_imp, mso, ff_out =
+        clp_check_both_solutions(
+            PtrView(solution, nt),
+            PtrView(cost, nt),
+            PtrView(lower, nt),
+            PtrView(upper, nt),
+            PtrView(dj, nt),
+            PtrView(status, nt),
+            nt,
+            Float64(primal_tol),
+            Float64(dual_tol),
+            Float64(largest_primal_err),
+            Float64(largest_dual_err),
+            Int(algorithm),
+            Int(unsafe_load(io_more_special_options)),
+            ff1,
+            Int(last_iter_num0),
+            Float64(nonlinear_offset),
+            Float64(obj_scale),
+            Float64(rhs_scale),
+        )
+    unsafe_store!(out_obj_val, obj_val)
+    unsafe_store!(out_sum_p_inf, sum_p)
+    unsafe_store!(out_sum_rel_p_inf, sum_rp)
+    unsafe_store!(out_num_p_inf, Cint(num_p))
+    unsafe_store!(out_sum_d_inf, sum_d)
+    unsafe_store!(out_sum_rel_d_inf, sum_rd)
+    unsafe_store!(out_num_d_inf, Cint(num_d))
+    unsafe_store!(out_num_d_inf_no_free, Cint(num_dnf))
+    unsafe_store!(out_best_imp, best_imp)
+    unsafe_store!(io_more_special_options, Cint(mso))
+    unsafe_store!(io_first_free_0based, Cint(ff_out > 0 ? (ff_out - 1) : -1))
+    return nothing
+end
+
+Base.@ccallable function jclp_all_slack_basis(
+    col_act::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    ncols::Cint,
+    solution::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    rhs_scale::Cdouble,
+)::Cvoid
+    nc = Int(ncols)
+    ca = PtrView(col_act, nc)
+    st = PtrView(status, nc)
+    lo = PtrView(col_lo, nc)
+    hi = PtrView(col_hi, nc)
+    rs = Float64(rhs_scale)
+    if solution == C_NULL
+        clp_all_slack_basis!(ca, st, lo, hi, nc, nothing, nothing, rs)
+    elseif inv_col_scale == C_NULL
+        clp_all_slack_basis!(ca, st, lo, hi, nc, PtrView(solution, nc), nothing, rs)
+    else
+        clp_all_slack_basis!(ca, st, lo, hi, nc, PtrView(solution, nc), PtrView(inv_col_scale, nc), rs)
+    end
+    return nothing
+end
+
+Base.@ccallable function jclp_check_solution_internal(
+    status::Ptr{Cuchar},
+    dual::Ptr{Cdouble},
+    row_act::Ptr{Cdouble},
+    row_lo::Ptr{Cdouble},
+    row_hi::Ptr{Cdouble},
+    reduced_cost::Ptr{Cdouble},
+    col_act::Ptr{Cdouble},
+    col_lo::Ptr{Cdouble},
+    col_hi::Ptr{Cdouble},
+    objective::Ptr{Cdouble},
+    nrows::Cint,
+    ncols::Cint,
+    primal_tol::Cdouble,
+    dual_tol::Cdouble,
+    dual_tol_work::Cdouble,
+    opt_dir::Cdouble,
+    grad_nonlinear_offset::Cdouble,
+    obj_nonlinear_offset::Cdouble,
+    out_obj_val::Ptr{Cdouble},
+    out_sum_p_inf::Ptr{Cdouble},
+    out_num_p_inf::Ptr{Cint},
+    out_sum_d_inf::Ptr{Cdouble},
+    out_num_d_inf::Ptr{Cint},
+    out_prob_status::Ptr{Cint},
+)::Cvoid
+    nr = Int(nrows)
+    nc = Int(ncols)
+    obj_val, sum_p, num_p, sum_d, num_d, pstat = clp_check_solution_internal!(
+        PtrView(status, nr + nc),
+        PtrView(dual, nr),
+        PtrView(row_act, nr),
+        PtrView(row_lo, nr),
+        PtrView(row_hi, nr),
+        PtrView(reduced_cost, nc),
+        PtrView(col_act, nc),
+        PtrView(col_lo, nc),
+        PtrView(col_hi, nc),
+        PtrView(objective, nc),
+        nr,
+        nc,
+        Float64(primal_tol),
+        Float64(dual_tol),
+        Float64(dual_tol_work),
+        Float64(opt_dir),
+        Float64(grad_nonlinear_offset),
+        Float64(obj_nonlinear_offset),
+    )
+    unsafe_store!(out_obj_val, obj_val)
+    unsafe_store!(out_sum_p_inf, sum_p)
+    unsafe_store!(out_num_p_inf, Cint(num_p))
+    unsafe_store!(out_sum_d_inf, sum_d)
+    unsafe_store!(out_num_d_inf, Cint(num_d))
+    unsafe_store!(out_prob_status, Cint(pstat))
+    return nothing
+end
