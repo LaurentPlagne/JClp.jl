@@ -89,11 +89,11 @@ typedef struct CoinPresolvePodView {
     int32_t           numberRowsToDo;
     int32_t           numberNextRowsToDo;
     int32_t           pass;
-    int32_t           _pad;
+    int32_t           maxSubstLevel;
 } CoinPresolvePodView;
 
 /* POD mirror of CoinPostsolveMatrix for B7.
-   16 8-byte pointers (128B) + 3 doubles (24B) + 8 int32_t (32B) = 184 bytes. */
+   18 8-byte pointers (144B) + 3 doubles (24B) + 8 int32_t (32B) = 200 bytes. */
 typedef struct CoinPostsolvePodView {
     int32_t          *mcstrt;
     int32_t          *hincol;
@@ -112,6 +112,8 @@ typedef struct CoinPostsolvePodView {
     double           *rcosts;
     uint8_t          *colstat;
     uint8_t          *rowstat;
+    const double     *originalRowLower;
+    const double     *originalRowUpper;
 
     double            maxmin;
     double            ztolzb;
@@ -206,6 +208,58 @@ typedef struct DualActionPod {
     int32_t ndx;
     int32_t _pad;
 } DualActionPod;
+
+/* Exact mirrors of B7c1 C++ action structs */
+typedef struct DoubletonActionPod {
+    double  clox;
+    double  cupx;
+    double  costx;
+    double  costy;
+    double  rlo;
+    double  coeffx;
+    double  coeffy;
+    double *colel;
+    int32_t icolx;
+    int32_t icoly;
+    int32_t row;
+    int32_t ncolx;
+    int32_t ncoly;
+    int32_t _pad;
+} DoubletonActionPod;
+
+typedef struct TripletonActionPod {
+    int32_t icolx;
+    int32_t icolz;
+    int32_t row;
+    int32_t icoly;
+    double  cloy;
+    double  cupy;
+    double  costy;
+    double  clox;
+    double  cupx;
+    double  costx;
+    double  rlo;
+    double  rup;
+    double  coeffx;
+    double  coeffy;
+    double  coeffz;
+    double *colel;
+    int32_t ncolx;
+    int32_t ncoly;
+} TripletonActionPod;
+
+typedef struct ImpliedFreeActionPod {
+    int32_t       row;
+    int32_t       col;
+    double        clo;
+    double        cup;
+    double        rlo;
+    double        rup;
+    const double *rowels;
+    const double *costs;
+    int32_t       ninrow;
+    int32_t       _pad;
+} ImpliedFreeActionPod;
 
 #ifdef __cplusplus
 }

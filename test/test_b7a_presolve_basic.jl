@@ -5,7 +5,7 @@ using JClp
     @testset "ABI layout" begin
         @test sizeof(JClp.PresolveHLinkPod) == 8
         @test sizeof(JClp.CoinPresolvePodView) == 416
-        @test sizeof(JClp.CoinPostsolvePodView) == 184
+        @test sizeof(JClp.CoinPostsolvePodView) == 200
         @test sizeof(JClp.DroppedZeroPod) == 8
         @test sizeof(JClp.DropEmptyColActionPod) == 40
         @test sizeof(JClp.DropEmptyRowActionPod) == 24
@@ -13,7 +13,7 @@ using JClp
         @test sizeof(JClp.RemoveFixedActionPod) == 16
         @test sizeof(JClp.MakeFixedActionPod) == 16
         @test JClp.jclp_ps_pod_sizeof() == Cint(416)
-        @test JClp.jclp_post_pod_sizeof() == Cint(184)
+        @test JClp.jclp_post_pod_sizeof() == Cint(200)
     end
 
     @testset "ps_make_memlists! & ps_expand_major!" begin

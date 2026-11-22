@@ -14,4 +14,5 @@ using Test
     include("test_b6_mps_io.jl")
     include("test_b7a_presolve_basic.jl")
     include("test_b7b_presolve_medium.jl")
+    include("test_b7c1_presolve_adv1.jl")
 end

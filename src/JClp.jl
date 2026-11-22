@@ -17,6 +17,7 @@ include("coinutils/CoinMpsIO.jl")
 include("coinutils/CoinPresolvePod.jl")
 include("coinutils/CoinPresolveBasic.jl")
 include("coinutils/CoinPresolveMedium.jl")
+include("coinutils/CoinPresolveAdvanced1.jl")
 
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
 include("bridge/capi.jl")

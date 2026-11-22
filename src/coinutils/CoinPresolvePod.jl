@@ -13,6 +13,7 @@ const PS_STATUS_AT_LOWER_BOUND = UInt8(0x03)
 const PS_STATUS_SUPER_BASIC    = UInt8(0x04)
 
 @inline _fmadd(a::Float64, b::Float64, c::Float64)::Float64 = fma(a, b, c)
+@inline _fnmsub(a::Float64, b::Float64, c::Float64)::Float64 = fma(a, b, -c)
 
 struct PresolveHLinkPod
     pre::Int32
@@ -94,7 +95,7 @@ struct CoinPresolvePodView
     numberRowsToDo::Int32
     numberNextRowsToDo::Int32
     pass::Int32
-    _pad::Int32
+    maxSubstLevel::Int32
 end
 
 struct CoinPostsolvePodView
@@ -115,6 +116,8 @@ struct CoinPostsolvePodView
     rcosts::Ptr{Float64}
     colstat::Ptr{UInt8}
     rowstat::Ptr{UInt8}
+    originalRowLower::Ptr{Float64}
+    originalRowUpper::Ptr{Float64}
 
     maxmin::Float64
     ztolzb::Float64
@@ -128,6 +131,21 @@ struct CoinPostsolvePodView
     bulk0::Int32
     free_list::Int32
     _pad::Int32
+end
+
+function CoinPostsolvePodView(
+    mcstrt, hincol, hrow, link, colels,
+    clo, cup, rlo, rup, cost, sol, acts, rowduals, rcosts, colstat, rowstat,
+    maxmin, ztolzb, ztoldj,
+    nrows, ncols, nrows0, ncols0, nelems, bulk0, free_list, _pad,
+)
+    return CoinPostsolvePodView(
+        mcstrt, hincol, hrow, link, colels,
+        clo, cup, rlo, rup, cost, sol, acts, rowduals, rcosts, colstat, rowstat,
+        Ptr{Float64}(C_NULL), Ptr{Float64}(C_NULL),
+        maxmin, ztolzb, ztoldj,
+        nrows, ncols, nrows0, ncols0, nelems, bulk0, free_list, _pad,
+    )
 end
 
 # Action POD structs
@@ -207,6 +225,58 @@ struct DualActionPod
     rlo::Float64
     rup::Float64
     ndx::Int32
+    _pad::Int32
+end
+
+# B7c1 Action POD structs
+struct DoubletonActionPod
+    clox::Float64
+    cupx::Float64
+    costx::Float64
+    costy::Float64
+    rlo::Float64
+    coeffx::Float64
+    coeffy::Float64
+    colel::Ptr{Float64}
+    icolx::Int32
+    icoly::Int32
+    row::Int32
+    ncolx::Int32
+    ncoly::Int32
+    _pad::Int32
+end
+
+struct TripletonActionPod
+    icolx::Int32
+    icolz::Int32
+    row::Int32
+    icoly::Int32
+    cloy::Float64
+    cupy::Float64
+    costy::Float64
+    clox::Float64
+    cupx::Float64
+    costx::Float64
+    rlo::Float64
+    rup::Float64
+    coeffx::Float64
+    coeffy::Float64
+    coeffz::Float64
+    colel::Ptr{Float64}
+    ncolx::Int32
+    ncoly::Int32
+end
+
+struct ImpliedFreeActionPod
+    row::Int32
+    col::Int32
+    clo::Float64
+    cup::Float64
+    rlo::Float64
+    rup::Float64
+    rowels::Ptr{Float64}
+    costs::Ptr{Float64}
+    ninrow::Int32
     _pad::Int32
 end
 

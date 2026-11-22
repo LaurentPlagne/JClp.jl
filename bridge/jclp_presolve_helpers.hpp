@@ -93,6 +93,7 @@ static inline CoinPresolvePodView jclp_pack_presolve(CoinPresolveMatrix *prob)
   v.numberRowsToDo = prob->numberRowsToDo_;
   v.numberNextRowsToDo = prob->numberNextRowsToDo_;
   v.pass = prob->pass_;
+  v.maxSubstLevel = prob->maxSubstLevel_;
   return v;
 }
 
@@ -129,6 +130,8 @@ static inline CoinPostsolvePodView jclp_pack_postsolve(CoinPostsolveMatrix *prob
   v.rcosts = prob->rcosts_;
   v.colstat = prob->colstat_;
   v.rowstat = prob->rowstat_;
+  v.originalRowLower = prob->originalRowLower_;
+  v.originalRowUpper = prob->originalRowUpper_;
 
   v.maxmin = prob->maxmin_;
   v.ztolzb = prob->ztolzb_;

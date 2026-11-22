@@ -1036,3 +1036,115 @@ Base.@ccallable function jclp_ps_dual_postsolve(
     ps_dual_postsolve!(p_ptr, bnd_records, Int32(num_recs))
     return nothing
 end
+
+# -----------------------------------------------------------------------------
+# B7c1: CoinPresolveDoubleton, Tripleton, ImpliedFree
+# -----------------------------------------------------------------------------
+
+Base.@ccallable function jclp_ps_doubleton_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions_out::Ptr{DoubletonActionPod},
+    alloc_dbl_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nzeros::Ptr{Cint},
+    out_nfixed::Ptr{Cint},
+    out_nomem::Ptr{Cint},
+    out_infeas_col::Ptr{Cint},
+    out_infeas_lo::Ptr{Cdouble},
+    out_infeas_up::Ptr{Cdouble},
+)::Cvoid
+    ps_doubleton_presolve!(
+        p_ptr, actions_out, alloc_dbl_cb,
+        out_nactions, out_nzeros, out_nfixed, out_nomem,
+        out_infeas_col, out_infeas_lo, out_infeas_up,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_doubleton_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{DoubletonActionPod},
+    nactions::Cint,
+    index1::Ptr{Cint},
+    element1::Ptr{Cdouble},
+)::Cvoid
+    ps_doubleton_postsolve!(p_ptr, actions, Int32(nactions), index1, element1)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_tripleton_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions_out::Ptr{TripletonActionPod},
+    alloc_dbl_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nzeros::Ptr{Cint},
+    out_nomem::Ptr{Cint},
+)::Cvoid
+    ps_tripleton_presolve!(
+        p_ptr, actions_out, alloc_dbl_cb, out_nactions, out_nzeros, out_nomem,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_tripleton_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{TripletonActionPod},
+    nactions::Cint,
+    index1::Ptr{Cint},
+    element1::Ptr{Cdouble},
+    index2::Ptr{Cint},
+    element2::Ptr{Cdouble},
+)::Cvoid
+    ps_tripleton_postsolve!(
+        p_ptr, actions, Int32(nactions), index1, element1, index2, element2,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_check_row(
+    mrstrt::Ptr{Cint},
+    rowels::Ptr{Cdouble},
+    hcol::Ptr{Cint},
+    hinrow::Ptr{Cint},
+    coeff_factor::Cdouble,
+    kill_ratio::Cdouble,
+    irowx::Cint,
+    irowy::Cint,
+    bad_out::Ptr{Cint},
+)::Cint
+    return Cint(ps_check_row(
+        mrstrt, rowels, hcol, hinrow, coeff_factor, kill_ratio,
+        Int32(irowx), Int32(irowy), bad_out,
+    ))
+end
+
+Base.@ccallable function jclp_ps_implied_free_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    fill_level_ptr::Ptr{Cint},
+    actions_out::Ptr{ImpliedFreeActionPod},
+    infinite_down::Ptr{Cint},
+    infinite_up::Ptr{Cint},
+    max_down::Ptr{Cdouble},
+    max_up::Ptr{Cdouble},
+    alloc_dbl_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_unprocessed::Ptr{Cint},
+    out_number_free::Ptr{Cint},
+    out_infeas_row::Ptr{Cint},
+)::Cvoid
+    ps_implied_free_presolve!(
+        p_ptr, fill_level_ptr, actions_out,
+        infinite_down, infinite_up, max_down, max_up,
+        alloc_dbl_cb, out_nactions, out_unprocessed, out_number_free, out_infeas_row,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_implied_free_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{ImpliedFreeActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_implied_free_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
