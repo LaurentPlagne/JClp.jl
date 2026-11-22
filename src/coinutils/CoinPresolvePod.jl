@@ -173,6 +173,43 @@ struct MakeFixedActionPod
     _pad::Int32
 end
 
+# B7b Action POD structs
+struct TightenActionPod
+    rows::Ptr{Int32}
+    lbound::Ptr{Float64}
+    ubound::Ptr{Float64}
+    col::Int32
+    nrows::Int32
+    direction::Int32
+    _pad::Int32
+end
+
+struct ForcingActionPod
+    rowcols::Ptr{Int32}
+    bounds::Ptr{Float64}
+    row::Int32
+    nlo::Int32
+    nup::Int32
+    _pad::Int32
+end
+
+struct SlackActionPod
+    clo::Float64
+    cup::Float64
+    rlo::Float64
+    rup::Float64
+    coeff::Float64
+    col::Int32
+    row::Int32
+end
+
+struct DualActionPod
+    rlo::Float64
+    rup::Float64
+    ndx::Int32
+    _pad::Int32
+end
+
 # Compile-time byte offsets for mutable scalar write-back
 const _PS_OFF_dobias             = fieldoffset(CoinPresolvePodView, Base.fieldindex(CoinPresolvePodView, :dobias))
 const _PS_OFF_nrows              = fieldoffset(CoinPresolvePodView, Base.fieldindex(CoinPresolvePodView, :nrows))

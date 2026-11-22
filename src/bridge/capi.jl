@@ -881,3 +881,158 @@ Base.@ccallable function jclp_ps_transfer_costs(
     ps_transfer_costs!(p_ptr)
     return nothing
 end
+
+# -----------------------------------------------------------------------------
+# B7b: CoinPresolveTighten, Forcing, Singleton, Dual
+# -----------------------------------------------------------------------------
+
+Base.@ccallable function jclp_ps_tighten_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions_out::Ptr{TightenActionPod},
+    alloc_cb::Ptr{Cvoid},
+    infeas_cb::Ptr{Cvoid},
+    cb_ctx::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nuseless::Ptr{Cint},
+    out_nfixup::Ptr{Cint},
+    out_nfixdown::Ptr{Cint},
+)::Cvoid
+    ps_tighten_presolve!(
+        p_ptr, actions_out, alloc_cb, infeas_cb, cb_ctx,
+        out_nactions, out_nuseless, out_nfixup, out_nfixdown,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_tighten_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{TightenActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_tighten_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_can_be_feasible(
+    p_ptr::Ptr{CoinPresolvePodView},
+    irow::Cint,
+)::Cint
+    return Cint(ps_can_be_feasible(p_ptr, Int32(irow)))
+end
+
+Base.@ccallable function jclp_ps_forcing_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions_out::Ptr{ForcingActionPod},
+    fixed_cols::Ptr{Cint},
+    useless_rows::Ptr{Cint},
+    alloc_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nuseless::Ptr{Cint},
+    out_nfixed::Ptr{Cint},
+    out_infeas_row::Ptr{Cint},
+)::Cvoid
+    ps_forcing_presolve!(
+        p_ptr, actions_out, fixed_cols, useless_rows, alloc_cb,
+        out_nactions, out_nuseless, out_nfixed, out_infeas_row,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_forcing_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{ForcingActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_forcing_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_slack_doubleton_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    actions_out::Ptr{SlackActionPod},
+    out_nactions::Ptr{Cint},
+    out_nfixed::Ptr{Cint},
+    out_infeas_col::Ptr{Cint},
+    out_infeas_lo::Ptr{Cdouble},
+    out_infeas_up::Ptr{Cdouble},
+)::Cvoid
+    ps_slack_doubleton_presolve!(
+        p_ptr, actions_out, out_nactions, out_nfixed,
+        out_infeas_col, out_infeas_lo, out_infeas_up,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_slack_doubleton_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{SlackActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_slack_doubleton_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_slack_singleton_presolve(
+    p_ptr::Ptr{CoinPresolvePodView},
+    row_objective::Ptr{Cdouble},
+    actions_ptr_ref::Ptr{Ptr{SlackActionPod}},
+    max_actions::Cint,
+    fixed_cols::Ptr{Cint},
+    grow_cb::Ptr{Cvoid},
+    out_nactions::Ptr{Cint},
+    out_nfixed::Ptr{Cint},
+)::Cvoid
+    ps_slack_singleton_presolve!(
+        p_ptr, row_objective, actions_ptr_ref, Int32(max_actions),
+        fixed_cols, grow_cb, out_nactions, out_nfixed,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_slack_singleton_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    actions::Ptr{SlackActionPod},
+    nactions::Cint,
+)::Cvoid
+    ps_slack_singleton_postsolve!(p_ptr, actions, Int32(nactions))
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_dual_presolve_phase1(
+    p_ptr::Ptr{CoinPresolvePodView},
+    cbarmin::Ptr{Cdouble},
+    cbarmax::Ptr{Cdouble},
+    msg_cb::Ptr{Cvoid},
+    cb_ctx::Ptr{Cvoid},
+    out_nfixup::Ptr{Cint},
+    out_nfixdown::Ptr{Cint},
+)::Cvoid
+    ps_dual_presolve_phase1!(
+        p_ptr, cbarmin, cbarmax, msg_cb, cb_ctx, out_nfixup, out_nfixdown,
+    )
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_dual_presolve_phase2(
+    p_ptr::Ptr{CoinPresolvePodView},
+)::Cint
+    return Cint(ps_dual_presolve_phase2!(p_ptr))
+end
+
+Base.@ccallable function jclp_ps_dual_presolve_apply(
+    p_ptr::Ptr{CoinPresolvePodView},
+    make_eq_cnt::Cint,
+    bnd_records::Ptr{DualActionPod},
+)::Cvoid
+    ps_dual_presolve_apply!(p_ptr, Int32(make_eq_cnt), bnd_records)
+    return nothing
+end
+
+Base.@ccallable function jclp_ps_dual_postsolve(
+    p_ptr::Ptr{CoinPostsolvePodView},
+    bnd_records::Ptr{DualActionPod},
+    num_recs::Cint,
+)::Cvoid
+    ps_dual_postsolve!(p_ptr, bnd_records, Int32(num_recs))
+    return nothing
+end

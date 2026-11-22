@@ -170,6 +170,43 @@ typedef struct MakeFixedActionPod {
     int32_t _pad;
 } MakeFixedActionPod;
 
+/* Exact mirrors of B7b C++ action structs */
+typedef struct TightenActionPod {
+    int32_t *rows;
+    double  *lbound;
+    double  *ubound;
+    int32_t  col;
+    int32_t  nrows;
+    int32_t  direction;
+    int32_t  _pad;
+} TightenActionPod;
+
+typedef struct ForcingActionPod {
+    const int32_t *rowcols;
+    const double  *bounds;
+    int32_t        row;
+    int32_t        nlo;
+    int32_t        nup;
+    int32_t        _pad;
+} ForcingActionPod;
+
+typedef struct SlackActionPod {
+    double  clo;
+    double  cup;
+    double  rlo;
+    double  rup;
+    double  coeff;
+    int32_t col;
+    int32_t row;
+} SlackActionPod;
+
+typedef struct DualActionPod {
+    double  rlo;
+    double  rup;
+    int32_t ndx;
+    int32_t _pad;
+} DualActionPod;
+
 #ifdef __cplusplus
 }
 #endif
