@@ -22,4 +22,5 @@ using Test
     include("test_b9b_primal_column_pivot.jl")
     include("test_b9c_nonlinear_cost.jl")
     include("test_b10_clp_factorization.jl")
+    include("test_b11a_simplex_dual.jl")
 end
