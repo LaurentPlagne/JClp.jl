@@ -1,0 +1,11 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/deps/deps.jl
+/docs/build
+bridge/build/
+bridge/test_bridge
+tools/ast_graph/extract_ast
+tools/ast_graph/out/shards/
+tools/parity/parity_runner_clean
+tools/parity/parity_runner_jclp

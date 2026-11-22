@@ -1,0 +1,15 @@
+name = "JClp"
+uuid = "42859c3e-f634-4e60-ba07-ac3804ac16e3"
+authors = ["Laurent Plagne <laurent.plagne@triscale-innov.com>"]
+version = "0.1.0"
+
+[deps]
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
+
+[compat]
+julia = "^1"

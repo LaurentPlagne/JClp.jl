@@ -1,0 +1,681 @@
+================================================================================
+JClp.jl V1 LP + CoinUtils AST Graph Analysis Report
+================================================================================
+
+1. RAW AST INVENTORY
+   Total nodes loaded: 5759
+   Total edges loaded: 26279
+   Entry seeds matched: 11
+     - ClpModel::readMps [Clp/src/ClpModel.cpp:2884]
+     - ClpPresolve::postsolve [Clp/src/ClpPresolve.cpp:1480]
+     - ClpPresolve::postsolve [Clp/src/ClpPresolve.cpp:192]
+     - ClpPresolve::presolvedModel [Clp/src/ClpPresolve.cpp:101]
+     - ClpSimplex::dual [Clp/src/ClpSimplex.cpp:5637]
+     - ClpSimplex::initialSolve [Clp/src/ClpSolve.cpp:4071]
+     - ClpSimplex::initialSolve [Clp/src/ClpSolve.cpp:845]
+     - ClpSimplex::primal [Clp/src/ClpSimplex.cpp:6151]
+     - ClpSimplexDual::dual [Clp/src/ClpSimplexDual.cpp:640]
+     - ClpSimplexPrimal::primal [Clp/src/ClpSimplexPrimal.cpp:135]
+     - Idiot::solve [Clp/src/Idiot.cpp:399]
+
+2. CLPFACTORIZATION CONNECTIONS TO COIN*FACTORIZATION
+   ClpFactorization -> CoinFactorization: 131 AST edge records (default active sparse LU backend)
+   ClpFactorization -> CoinOtherFactorization (47 unique AST edge pairs):
+     * ClpFactorization --[field_type:1]--> CoinOtherFactorization
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinOtherFactorization::clone
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinOtherFactorization::maximumPivots
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinOtherFactorization::pivotTolerance
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinOtherFactorization::zeroTolerance
+     * ClpFactorization::ClpFactorization --[calls:2]--> CoinOtherFactorization::maximumPivots
+     * ClpFactorization::ClpFactorization --[calls:2]--> CoinOtherFactorization::pivotTolerance
+     * ClpFactorization::ClpFactorization --[calls:2]--> CoinOtherFactorization::zeroTolerance
+     * ClpFactorization::ClpFactorization --[param_or_ret_type:1]--> CoinOtherFactorization
+     * ClpFactorization::almostDestructor --[calls:1]--> CoinOtherFactorization::clearArrays
+     * ClpFactorization::clearArrays --[calls:1]--> CoinOtherFactorization::clearArrays
+     * ClpFactorization::factorize --[calls:1]--> CoinOtherFactorization::elements
+     * ClpFactorization::factorize --[calls:1]--> CoinOtherFactorization::factor
+     * ClpFactorization::factorize --[calls:1]--> CoinOtherFactorization::getAreas
+     * ClpFactorization::factorize --[calls:1]--> CoinOtherFactorization::indices
+     * ... (32 more)
+   ClpFactorization -> CoinDenseFactorization (8 unique AST edge pairs):
+     * ClpFactorization::ClpFactorization --[body_type_ref:3]--> CoinDenseFactorization
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinDenseFactorization::CoinDenseFactorization
+     * ClpFactorization::forceOtherFactorization --[body_type_ref:1]--> CoinDenseFactorization
+     * ClpFactorization::forceOtherFactorization --[calls:1]--> CoinDenseFactorization::CoinDenseFactorization
+     * ClpFactorization::goDenseOrSmall --[body_type_ref:1]--> CoinDenseFactorization
+     * ClpFactorization::goDenseOrSmall --[calls:1]--> CoinDenseFactorization::CoinDenseFactorization
+     * ClpFactorization::operator= --[body_type_ref:4]--> CoinDenseFactorization
+     * ClpFactorization::operator= --[calls:1]--> CoinDenseFactorization::operator=
+   ClpFactorization -> CoinOslFactorization (8 unique AST edge pairs):
+     * ClpFactorization::ClpFactorization --[body_type_ref:1]--> CoinOslFactorization
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinOslFactorization::CoinOslFactorization
+     * ClpFactorization::forceOtherFactorization --[body_type_ref:1]--> CoinOslFactorization
+     * ClpFactorization::forceOtherFactorization --[calls:1]--> CoinOslFactorization::CoinOslFactorization
+     * ClpFactorization::goDenseOrSmall --[body_type_ref:1]--> CoinOslFactorization
+     * ClpFactorization::goDenseOrSmall --[calls:1]--> CoinOslFactorization::CoinOslFactorization
+     * ClpFactorization::operator= --[body_type_ref:4]--> CoinOslFactorization
+     * ClpFactorization::operator= --[calls:1]--> CoinOslFactorization::operator=
+   ClpFactorization -> CoinSimpFactorization (8 unique AST edge pairs):
+     * ClpFactorization::ClpFactorization --[body_type_ref:1]--> CoinSimpFactorization
+     * ClpFactorization::ClpFactorization --[calls:1]--> CoinSimpFactorization::CoinSimpFactorization
+     * ClpFactorization::forceOtherFactorization --[body_type_ref:1]--> CoinSimpFactorization
+     * ClpFactorization::forceOtherFactorization --[calls:1]--> CoinSimpFactorization::CoinSimpFactorization
+     * ClpFactorization::goDenseOrSmall --[body_type_ref:1]--> CoinSimpFactorization
+     * ClpFactorization::goDenseOrSmall --[calls:1]--> CoinSimpFactorization::CoinSimpFactorization
+     * ClpFactorization::operator= --[body_type_ref:4]--> CoinSimpFactorization
+     * ClpFactorization::operator= --[calls:1]--> CoinSimpFactorization::operator=
+   VERDICT: ClpFactorization holds field coinFactorizationB_ :: CoinOtherFactorization* and
+   instantiates CoinDenseFactorization / CoinSimpFactorization / CoinOslFactorization in
+   copy-ctor/operator=/goDenseOrSmall/forceOtherFactorization. However, default thresholds
+   are goOslThreshold_ = -1, goSmallThreshold_ = -1, goDenseThreshold_ = -1 (default ctor
+   uses CoinFactorization only). CoinOslFactorization & CoinSimpFactorization are optional
+   and safely EXCLUDED for V1; CoinDenseFactorization is KEPT as the small-dense override.
+
+3. REACHABILITY COMPARISON: FULL vs STRICT CALL-ONLY
+   Mode                         | TotalNodes | MF_Defined |     MF_All |    Modules |    Def_LOC
+   ------------------------------------------------------------------------------------------
+   Full (all edge kinds + revOv) |       1709 |       1479 |       1539 |        161 |      90630
+   Strict call-only (calls+revOv) |       1539 |       1479 |       1539 |        131 |      90630
+   Extra modules in Full vs Call-only (30): enum::CLP_Message, enum::COINMpsType, enum::COINSectionType, enum::COIN_Message, enum::ClpDblParam, enum::ClpStrParam, enum::CoinMessageMarker, type::ClpLpPhaseState, type::ClpTrustedData, type::Clp_message, type::Clp_scalars, type::CoinFirstLess_2, type::CoinPair, type::Coin_message, type::IdiotResult, type::blockStruct, type::buildFormat, type::clpTempInfo, type::dropped_zero, type::presolvehlink, typedef::COINColumnIndex, typedef::COINRowIndex, typedef::CoinBigIndex, typedef::CoinByteArray, typedef::CoinCheckZero, typedef::CoinFactorizationDouble, typedef::CoinFactorizationDouble2, typedef::CoinSighandler_t, typedef::cipfint, typedef::ipfint
+
+4. GRAPH 1: V1 TYPE/MODULE DEPENDENCY GRAPH (WITH VIRTUAL DISPATCH)
+   Nodes: 161 (types=111, file_free=33, enum/typedef=17)
+   Directed edges: 699
+   SCCs: 117 (singletons=110, multi-node=7, max_layer=9)
+   [Comparison without virtual dispatch edges in Graph 1: 121 SCCs, 6 multi-node, max_layer=10]
+
+   --- All Graph 1 SCCs by Bottom-Up Layer (0 = leaves) ---
+   [L00 | SCC#001 | size=1] enum::CLP_Message                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#002 | size=1] enum::COINMpsType                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#003 | size=1] enum::COINSectionType                      | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#004 | size=1] enum::COIN_Message                         | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#005 | size=1] enum::ClpDblParam                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#006 | size=1] enum::ClpStrParam                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#007 | size=1] enum::CoinMessageMarker                    | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#008 | size=1] file_free::ClpHelperFunctions              | mf=   2 | loc=    18 | deps: -
+   [L00 | SCC#012 | size=1] file_free::ClpModelParameters              | mf=   4 | loc=    38 | deps: -
+   [L00 | SCC#013 | size=1] file_free::ClpNonLinearCost                | mf=   6 | loc=    27 | deps: -
+   [L00 | SCC#021 | size=1] file_free::ClpSimplex                      | mf=   2 | loc=    36 | deps: -
+   [L00 | SCC#044 | size=1] file_free::CoinFactorization2              | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#045 | size=1] file_free::CoinFactorization4              | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#023 | size=1] file_free::CoinFinite                      | mf=   1 | loc=     8 | deps: -
+   [L00 | SCC#061 | size=1] file_free::CoinPresolveDupcol              | mf=   3 | loc=    62 | deps: -
+   [L00 | SCC#086 | size=1] file_free::CoinPresolveImpliedFree         | mf=   1 | loc=    33 | deps: -
+   [L00 | SCC#019 | size=1] file_free::CoinSort                        | mf=   2 | loc=   160 | deps: -
+   [L00 | SCC#015 | size=1] file_free::CoinTable                       | mf=   1 | loc=     5 | deps: -
+   [L00 | SCC#020 | size=1] file_free::CoinTime                        | mf=   3 | loc=    48 | deps: -
+   [L00 | SCC#101 | size=1] file_free::IdiSolve                        | mf=   1 | loc=    52 | deps: -
+   [L00 | SCC#030 | size=1] type::ClpDataSave                          | mf=   2 | loc=    32 | deps: -
+   [L00 | SCC#014 | size=1] type::ClpLpPhaseState                      | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#041 | size=1] type::ClpObjective                         | mf=   7 | loc=    36 | deps: -
+   [L00 | SCC#043 | size=1] type::ClpOutput                            | mf=   2 | loc=     2 | deps: -
+   [L00 | SCC#098 | size=1] type::ClpSolve                             | mf=  11 | loc=    60 | deps: -
+   [L00 | SCC#099 | size=1] type::ClpTrustedData                       | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#100 | size=1] type::Clp_scalars                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#009 | size=1] type::CoinError                            | mf=   3 | loc=    36 | deps: -
+   [L00 | SCC#070 | size=1] type::CoinFileIOBase                       | mf=   2 | loc=     8 | deps: -
+   [L00 | SCC#110 | size=1] type::CoinFirstLess_2                      | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#035 | size=1] type::CoinOneMessage                       | mf=   9 | loc=    60 | deps: -
+   [L00 | SCC#025 | size=1] type::CoinPackedVectorBase                 | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#111 | size=1] type::CoinPair                             | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#091 | size=1] type::CoinRelFltEq                         | mf=   1 | loc=     4 | deps: -
+   [L00 | SCC#106 | size=1] type::CoinSet                              | mf=   5 | loc=    24 | deps: -
+   [L00 | SCC#042 | size=1] type::CoinThreadRandom                     | mf=   4 | loc=    22 | deps: -
+   [L00 | SCC#102 | size=1] type::IdiotResult                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#073 | size=1] type::buildFormat                          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#068 | size=1] type::dropped_zero                         | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#054 | size=1] type::presolvehlink                        | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#112 | size=1] typedef::COINColumnIndex                   | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#113 | size=1] typedef::COINRowIndex                      | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#028 | size=1] typedef::CoinBigIndex                      | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#032 | size=1] typedef::CoinByteArray                     | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#114 | size=1] typedef::CoinCheckZero                     | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#052 | size=1] typedef::CoinFactorizationDouble           | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#046 | size=1] typedef::CoinFactorizationDouble2          | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#115 | size=1] typedef::CoinSighandler_t                  | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#116 | size=1] typedef::cipfint                           | mf=   0 | loc=     0 | deps: -
+   [L00 | SCC#117 | size=1] typedef::ipfint                            | mf=   0 | loc=     0 | deps: -
+   [L01 | SCC#105 | size=5] MULTI-NODE SCC | mf=10 | loc=186
+       - type::CoinBzip2FileInput                       | mf=   2 | loc=    29
+       - type::CoinFileInput                            | mf=   2 | loc=    49
+       - type::CoinGetslessFileInput                    | mf=   2 | loc=    55
+       - type::CoinGzipFileInput                        | mf=   2 | loc=    15
+       - type::CoinPlainFileInput                       | mf=   2 | loc=    38
+       -> External SCC deps: L0:SCC#9(type::CoinError), L0:SCC#70(type::CoinFileIOBase)
+   [L01 | SCC#071 | size=4] MULTI-NODE SCC | mf=10 | loc=104
+       - type::CoinBzip2FileOutput                      | mf=   2 | loc=    29
+       - type::CoinFileOutput                           | mf=   3 | loc=    39
+       - type::CoinGzipFileOutput                       | mf=   2 | loc=    14
+       - type::CoinPlainFileOutput                      | mf=   3 | loc=    22
+       -> External SCC deps: L0:SCC#9(type::CoinError), L0:SCC#70(type::CoinFileIOBase)
+   [L01 | SCC#055 | size=2] MULTI-NODE SCC | mf=24 | loc=398
+       - file_free::CoinPresolveHelperFunctions         | mf=   8 | loc=   259
+       - file_free::CoinPresolveMatrix                  | mf=  16 | loc=   139
+       -> External SCC deps: L0:SCC#54(type::presolvehlink)
+   [L01 | SCC#010 | size=1] file_free::CoinHelperFunctions             | mf=  13 | loc=   438 | deps: L0:type::CoinError
+   [L01 | SCC#103 | size=1] type::Clp_message                          | mf=   0 | loc=     0 | deps: L0:enum::CLP_Message
+   [L01 | SCC#024 | size=1] type::CoinAbsFltEq                         | mf=   2 | loc=    13 | deps: L0:file_free::CoinFinite
+   [L01 | SCC#074 | size=1] type::CoinBuild                            | mf=   8 | loc=   121 | deps: L0:typedef::CoinBigIndex, L0:type::buildFormat
+   [L01 | SCC#047 | size=1] type::CoinOtherFactorization               | mf=  21 | loc=   119 | deps: L0:typedef::CoinFactorizationDouble2
+   [L01 | SCC#026 | size=1] type::CoinPackedVector                     | mf=   3 | loc=     3 | deps: L0:type::CoinPackedVectorBase
+   [L01 | SCC#060 | size=1] type::CoinPresolveAction                   | mf=   2 | loc=     8 | deps: L0:type::CoinError
+   [L01 | SCC#027 | size=1] type::CoinShallowPackedVector              | mf=   3 | loc=     3 | deps: L0:type::CoinPackedVectorBase
+   [L01 | SCC#107 | size=1] type::CoinSosSet                           | mf=   1 | loc=    20 | deps: L0:type::CoinSet
+   [L01 | SCC#016 | size=1] type::CoinTable                            | mf=   7 | loc=   113 | deps: L0:file_free::CoinTable
+   [L01 | SCC#056 | size=1] type::Coin_message                         | mf=   0 | loc=     0 | deps: L0:enum::COIN_Message
+   [L01 | SCC#038 | size=1] type::blockStruct                          | mf=   0 | loc=     0 | deps: L0:typedef::CoinBigIndex
+   [L01 | SCC#039 | size=1] type::clpTempInfo                          | mf=   0 | loc=     0 | deps: L0:typedef::CoinBigIndex
+   [L02 | SCC#011 | size=1] file_free::ClpModel                        | mf=   6 | loc=   109 | deps: L1:file_free::CoinHelperFunctions
+   [L02 | SCC#017 | size=1] file_free::ClpOutput                       | mf=   5 | loc=    65 | deps: L0:type::ClpLpPhaseState, L1:type::CoinTable
+   [L02 | SCC#040 | size=1] file_free::ClpPrimalColumnSteepest         | mf=   2 | loc=    33 | deps: L1:type::clpTempInfo
+   [L02 | SCC#018 | size=1] file_free::CoinFileIO                      | mf=   2 | loc=    83 | deps: L1:file_free::CoinHelperFunctions
+   [L02 | SCC#072 | size=1] file_free::CoinMpsIO                       | mf=   9 | loc=   357 | deps: L1:file_free::CoinHelperFunctions, L1:type::CoinBzip2FileOutput(SCC71)
+   [L02 | SCC#022 | size=1] file_free::CoinPackedMatrix                | mf=   3 | loc=    34 | deps: L0:type::CoinError, L1:file_free::CoinHelperFunctions
+   [L02 | SCC#076 | size=1] file_free::CoinPresolveDoubleton           | mf=   1 | loc=    95 | deps: L1:file_free::CoinPresolveHelperFunctions(SCC55)
+   [L02 | SCC#087 | size=1] file_free::CoinPresolveSubst               | mf=   1 | loc=   128 | deps: L1:file_free::CoinPresolveHelperFunctions(SCC55)
+   [L02 | SCC#095 | size=1] file_free::CoinPresolveTripleton           | mf=   1 | loc=   221 | deps: L1:file_free::CoinPresolveHelperFunctions(SCC55)
+   [L02 | SCC#033 | size=1] type::CoinArrayWithLength                  | mf=  12 | loc=   169 | deps: L1:file_free::CoinHelperFunctions, L0:typedef::CoinByteArray
+   [L02 | SCC#031 | size=1] type::CoinIndexedVector                    | mf=  28 | loc=   444 | deps: L0:type::CoinError, L1:file_free::CoinHelperFunctions
+   [L02 | SCC#036 | size=1] type::CoinMessages                         | mf=   9 | loc=   203 | deps: L1:file_free::CoinHelperFunctions, L0:type::CoinOneMessage
+   [L03 | SCC#037 | size=2] MULTI-NODE SCC | mf=34 | loc=633
+       - type::ClpLpMsgHandler                          | mf=   4 | loc=   124
+       - type::CoinMessageHandler                       | mf=  30 | loc=   509
+       -> External SCC deps: L0:SCC#14(type::ClpLpPhaseState), L2:SCC#17(file_free::ClpOutput), L0:SCC#20(file_free::CoinTime), L0:SCC#28(typedef::CoinBigIndex), L0:SCC#35(type::CoinOneMessage), L2:SCC#36(type::CoinMessages)
+   [L03 | SCC#104 | size=1] type::ClpMessage                           | mf=   1 | loc=    37 | deps: L0:type::CoinOneMessage, L2:type::CoinMessages, L1:type::Clp_message
+   [L03 | SCC#048 | size=1] type::CoinDenseFactorization               | mf=  21 | loc=   859 | deps: L1:file_free::CoinHelperFunctions, L2:type::CoinIndexedVector, L0:file_free::CoinFactorization2, L0:file_free::CoinFactorization4, L1:type::CoinOtherFactorization
+   [L03 | SCC#034 | size=1] type::CoinDoubleArrayWithLength            | mf=   2 | loc=     8 | deps: L2:type::CoinArrayWithLength
+   [L03 | SCC#049 | size=1] type::CoinFactorizationDoubleArrayWithLength | mf=   5 | loc=    22 | deps: L2:type::CoinArrayWithLength
+   [L03 | SCC#050 | size=1] type::CoinIntArrayWithLength               | mf=   5 | loc=    22 | deps: L2:type::CoinArrayWithLength
+   [L03 | SCC#057 | size=1] type::CoinMessage                          | mf=   1 | loc=    36 | deps: L0:type::CoinOneMessage, L2:type::CoinMessages, L1:type::Coin_message
+   [L03 | SCC#029 | size=1] type::CoinPackedMatrix                     | mf=  69 | loc=  2359 | deps: L0:type::CoinError, L1:file_free::CoinHelperFunctions, L0:file_free::CoinSort, L2:file_free::CoinPackedMatrix, L1:type::CoinAbsFltEq, L0:type::CoinPackedVectorBase, L1:type::CoinPackedVector, L1:type::CoinShallowPackedVector, L0:typedef::CoinBigIndex
+   [L03 | SCC#051 | size=1] type::CoinUnsignedIntArrayWithLength       | mf=   4 | loc=    18 | deps: L2:type::CoinArrayWithLength
+   [L04 | SCC#108 | size=2] MULTI-NODE SCC | mf=73 | loc=4556
+       - type::CoinMpsCardReader                        | mf=  24 | loc=  1127
+       - type::CoinMpsIO                                | mf=  49 | loc=  3429
+       -> External SCC deps: L0:SCC#2(enum::COINMpsType), L0:SCC#3(enum::COINSectionType), L1:SCC#10(file_free::CoinHelperFunctions), L2:SCC#18(file_free::CoinFileIO), L0:SCC#19(file_free::CoinSort), L0:SCC#28(typedef::CoinBigIndex), L3:SCC#29(type::CoinPackedMatrix), L2:SCC#36(type::CoinMessages), L3:SCC#37(type::ClpLpMsgHandler), L3:SCC#57(type::CoinMessage), L0:SCC#70(type::CoinFileIOBase), L1:SCC#71(type::CoinBzip2FileOutput), L2:SCC#72(file_free::CoinMpsIO), L1:SCC#105(type::CoinBzip2FileInput), L0:SCC#106(type::CoinSet), L1:SCC#107(type::CoinSosSet)
+   [L04 | SCC#053 | size=1] type::CoinFactorization                    | mf= 114 | loc=  8499 | deps: L1:file_free::CoinHelperFunctions, L0:file_free::CoinTime, L3:type::CoinPackedMatrix, L2:type::CoinIndexedVector, L2:type::CoinArrayWithLength, L0:file_free::CoinFactorization2, L0:file_free::CoinFactorization4, L3:type::CoinFactorizationDoubleArrayWithLength, L3:type::CoinIntArrayWithLength, L3:type::CoinUnsignedIntArrayWithLength, L0:typedef::CoinFactorizationDouble
+   [L04 | SCC#058 | size=1] type::CoinPrePostsolveMatrix               | mf=  13 | loc=   182 | deps: L0:typedef::CoinBigIndex, L2:type::CoinMessages, L3:type::ClpLpMsgHandler(SCC37), L3:type::CoinMessage
+   [L05 | SCC#059 | size=1] type::CoinPostsolveMatrix                  | mf=   1 | loc=    17 | deps: L0:typedef::CoinBigIndex, L4:type::CoinPrePostsolveMatrix
+   [L05 | SCC#062 | size=1] type::CoinPresolveMatrix                   | mf=  30 | loc=   332 | deps: L0:file_free::CoinTime, L0:typedef::CoinBigIndex, L0:type::presolvehlink, L4:type::CoinPrePostsolveMatrix, L0:file_free::CoinPresolveDupcol
+   [L06 | SCC#069 | size=2] MULTI-NODE SCC | mf=8 | loc=293
+       - file_free::CoinPresolveZeros                   | mf=   5 | loc=   165
+       - type::drop_zero_coefficients_action            | mf=   3 | loc=   128
+       -> External SCC deps: L1:SCC#55(file_free::CoinPresolveHelperFunctions), L4:SCC#58(type::CoinPrePostsolveMatrix), L5:SCC#59(type::CoinPostsolveMatrix), L1:SCC#60(type::CoinPresolveAction), L5:SCC#62(type::CoinPresolveMatrix), L0:SCC#68(type::dropped_zero)
+   [L06 | SCC#083 | size=1] file_free::CoinPresolveForcing             | mf=   2 | loc=   132 | deps: L4:type::CoinPrePostsolveMatrix, L5:type::CoinPresolveMatrix
+   [L06 | SCC#078 | size=1] type::drop_empty_cols_action               | mf=   4 | loc=   366 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L0:type::presolvehlink, L4:type::CoinPrePostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix
+   [L06 | SCC#079 | size=1] type::drop_empty_rows_action               | mf=   3 | loc=   259 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L4:type::CoinPrePostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix
+   [L06 | SCC#085 | size=1] type::gubrow_action                        | mf=   3 | loc=   306 | deps: L1:file_free::CoinHelperFunctions, L0:file_free::CoinTime, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix
+   [L06 | SCC#090 | size=1] type::isolated_constraint_action           | mf=   1 | loc=    61 | deps: L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction
+   [L06 | SCC#063 | size=1] type::remove_fixed_action                  | mf=   3 | loc=   371 | deps: L1:file_free::CoinHelperFunctions, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix
+   [L06 | SCC#066 | size=1] type::useless_constraint_action            | mf=   3 | loc=   178 | deps: L1:file_free::CoinHelperFunctions, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix
+   [L07 | SCC#067 | size=1] file_free::CoinPresolveUseless             | mf=   1 | loc=   589 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPresolveMatrix, L6:type::remove_fixed_action, L6:type::useless_constraint_action
+   [L07 | SCC#077 | size=1] type::doubleton_action                     | mf=   3 | loc=  1641 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:type::remove_fixed_action, L6:file_free::CoinPresolveZeros(SCC69), L2:file_free::CoinPresolveDoubleton
+   [L07 | SCC#081 | size=1] type::duprow3_action                       | mf=   2 | loc=   246 | deps: L0:file_free::CoinTime, L3:type::CoinPackedMatrix, L2:type::CoinIndexedVector, L4:type::CoinFactorization, L4:type::CoinPrePostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:type::useless_constraint_action
+   [L07 | SCC#082 | size=1] type::duprow_action                        | mf=   2 | loc=   256 | deps: L0:file_free::CoinSort, L0:file_free::CoinTime, L3:type::ClpLpMsgHandler(SCC37), L4:type::CoinPrePostsolveMatrix, L1:type::CoinPresolveAction, L0:file_free::CoinPresolveDupcol, L5:type::CoinPresolveMatrix, L6:type::useless_constraint_action
+   [L07 | SCC#084 | size=1] type::forcing_constraint_action            | mf=   3 | loc=   553 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:type::remove_fixed_action, L6:type::useless_constraint_action, L6:file_free::CoinPresolveForcing
+   [L07 | SCC#064 | size=1] type::make_fixed_action                    | mf=   3 | loc=   185 | deps: L4:type::CoinPrePostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:type::remove_fixed_action
+   [L07 | SCC#093 | size=1] type::slack_doubleton_action               | mf=   3 | loc=   490 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:type::remove_fixed_action
+   [L07 | SCC#088 | size=1] type::subst_constraint_action              | mf=   3 | loc=   854 | deps: L1:file_free::CoinHelperFunctions, L0:file_free::CoinSort, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:file_free::CoinPresolveZeros(SCC69), L2:file_free::CoinPresolveSubst
+   [L07 | SCC#096 | size=1] type::tripleton_action                     | mf=   3 | loc=   781 | deps: L1:file_free::CoinHelperFunctions, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:file_free::CoinPresolveZeros(SCC69), L2:file_free::CoinPresolveTripleton
+   [L07 | SCC#097 | size=1] type::twoxtwo_action                       | mf=   3 | loc=  1029 | deps: L0:file_free::CoinTime, L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:type::useless_constraint_action
+   [L08 | SCC#065 | size=1] file_free::CoinPresolveFixed               | mf=   2 | loc=   201 | deps: L4:type::CoinPrePostsolveMatrix, L5:type::CoinPresolveMatrix, L7:type::make_fixed_action
+   [L08 | SCC#075 | size=1] type::do_tighten_action                    | mf=   3 | loc=   438 | deps: L1:file_free::CoinHelperFunctions, L3:type::ClpLpMsgHandler(SCC37), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L7:type::make_fixed_action, L6:type::useless_constraint_action
+   [L08 | SCC#080 | size=1] type::dupcol_action                        | mf=   3 | loc=   927 | deps: L1:file_free::CoinHelperFunctions, L0:file_free::CoinSort, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L0:file_free::CoinPresolveDupcol, L5:type::CoinPresolveMatrix, L7:type::make_fixed_action
+   [L08 | SCC#089 | size=1] type::implied_free_action                  | mf=   3 | loc=  1237 | deps: L1:file_free::CoinHelperFunctions, L0:file_free::CoinSort, L3:type::ClpLpMsgHandler(SCC37), L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L6:file_free::CoinPresolveForcing, L0:file_free::CoinPresolveImpliedFree, L7:type::subst_constraint_action
+   [L08 | SCC#092 | size=1] type::remove_dual_action                   | mf=   3 | loc=  1756 | deps: L3:type::ClpLpMsgHandler(SCC37), L4:type::CoinPrePostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L7:type::make_fixed_action, L0:type::CoinRelFltEq
+   [L08 | SCC#094 | size=1] type::slack_singleton_action               | mf=   3 | loc=   544 | deps: L1:file_free::CoinHelperFunctions, L0:file_free::CoinTime, L1:file_free::CoinPresolveHelperFunctions(SCC55), L4:type::CoinPrePostsolveMatrix, L5:type::CoinPostsolveMatrix, L1:type::CoinPresolveAction, L5:type::CoinPresolveMatrix, L7:type::make_fixed_action
+   [L09 | SCC#109 | size=34] MULTI-NODE SCC | mf=781 | loc=55119
+       - file_free::ClpPackedMatrix                     | mf=   6 | loc=   907
+       - file_free::ClpPresolve                         | mf=   7 | loc=   914
+       - file_free::ClpSolve                            | mf=   3 | loc=   102
+       - file_free::Idiot                               | mf=   1 | loc=    48
+       - type::ClpDisasterHandler                       | mf=   0 | loc=     0
+       - type::ClpDualRowDantzig                        | mf=   6 | loc=   119
+       - type::ClpDualRowPivot                          | mf=  10 | loc=    36
+       - type::ClpDualRowSteepest                       | mf=  12 | loc=   947
+       - type::ClpEventHandler                          | mf=   5 | loc=    30
+       - type::ClpFactorization                         | mf=  42 | loc=  1859
+       - type::ClpLinearObjective                       | mf=  10 | loc=   162
+       - type::ClpLpEventHandler                        | mf=   7 | loc=   119
+       - type::ClpMatrixBase                            | mf=  39 | loc=   359
+       - type::ClpModel                                 | mf= 141 | loc=  3399
+       - type::ClpNonLinearCost                         | mf=  24 | loc=  1357
+       - type::ClpPEDualRowDantzig                      | mf=   6 | loc=   237
+       - type::ClpPEDualRowSteepest                     | mf=   7 | loc=   428
+       - type::ClpPEPrimalColumnDantzig                 | mf=   5 | loc=   321
+       - type::ClpPEPrimalColumnSteepest                | mf=   7 | loc=   539
+       - type::ClpPESimplex                             | mf=  33 | loc=   436
+       - type::ClpPackedMatrix                          | mf=  68 | loc=  4244
+       - type::ClpPackedMatrix2                         | mf=   4 | loc=   480
+       - type::ClpPackedMatrix3                         | mf=   8 | loc=  2169
+       - type::ClpPresolve                              | mf=  32 | loc=  1531
+       - type::ClpPrimalColumnDantzig                   | mf=   5 | loc=   197
+       - type::ClpPrimalColumnPivot                     | mf=  11 | loc=    42
+       - type::ClpPrimalColumnSteepest                  | mf=  28 | loc=  4219
+       - type::ClpProgressEventHandler                  | mf=   4 | loc=   109
+       - type::ClpSimplex                               | mf= 167 | loc= 14361
+       - type::ClpSimplexDual                           | mf=  24 | loc=  7177
+       - type::ClpSimplexOther                          | mf=   3 | loc=   425
+       - type::ClpSimplexPrimal                         | mf=  13 | loc=  3733
+       - type::ClpSimplexProgress                       | mf=  22 | loc=   485
+       - type::Idiot                                    | mf=  21 | loc=  3628
+       -> External SCC deps: L0:SCC#8(file_free::ClpHelperFunctions), L0:SCC#9(type::CoinError), L1:SCC#10(file_free::CoinHelperFunctions), L2:SCC#11(file_free::ClpModel), L0:SCC#12(file_free::ClpModelParameters), L0:SCC#13(file_free::ClpNonLinearCost), L0:SCC#14(type::ClpLpPhaseState), L1:SCC#16(type::CoinTable), L2:SCC#17(file_free::ClpOutput), L2:SCC#18(file_free::CoinFileIO), L0:SCC#19(file_free::CoinSort), L0:SCC#20(file_free::CoinTime), L0:SCC#21(file_free::ClpSimplex), L0:SCC#28(typedef::CoinBigIndex), L3:SCC#29(type::CoinPackedMatrix), L0:SCC#30(type::ClpDataSave), L2:SCC#31(type::CoinIndexedVector), L3:SCC#34(type::CoinDoubleArrayWithLength), L2:SCC#36(type::CoinMessages), L3:SCC#37(type::ClpLpMsgHandler), L1:SCC#38(type::blockStruct), L1:SCC#39(type::clpTempInfo), L2:SCC#40(file_free::ClpPrimalColumnSteepest), L0:SCC#41(type::ClpObjective), L0:SCC#42(type::CoinThreadRandom), L0:SCC#43(type::ClpOutput), L1:SCC#47(type::CoinOtherFactorization), L3:SCC#48(type::CoinDenseFactorization), L4:SCC#53(type::CoinFactorization), L1:SCC#55(file_free::CoinPresolveHelperFunctions), L3:SCC#57(type::CoinMessage), L4:SCC#58(type::CoinPrePostsolveMatrix), L5:SCC#59(type::CoinPostsolveMatrix), L1:SCC#60(type::CoinPresolveAction), L5:SCC#62(type::CoinPresolveMatrix), L6:SCC#63(type::remove_fixed_action), L7:SCC#64(type::make_fixed_action), L8:SCC#65(file_free::CoinPresolveFixed), L6:SCC#66(type::useless_constraint_action), L7:SCC#67(file_free::CoinPresolveUseless), L6:SCC#69(file_free::CoinPresolveZeros), L2:SCC#72(file_free::CoinMpsIO), L1:SCC#74(type::CoinBuild), L8:SCC#75(type::do_tighten_action), L7:SCC#77(type::doubleton_action), L6:SCC#78(type::drop_empty_cols_action), L6:SCC#79(type::drop_empty_rows_action), L8:SCC#80(type::dupcol_action), L7:SCC#81(type::duprow3_action), L7:SCC#82(type::duprow_action), L7:SCC#84(type::forcing_constraint_action), L6:SCC#85(type::gubrow_action), L7:SCC#88(type::subst_constraint_action), L8:SCC#89(type::implied_free_action), L6:SCC#90(type::isolated_constraint_action), L8:SCC#92(type::remove_dual_action), L7:SCC#93(type::slack_doubleton_action), L8:SCC#94(type::slack_singleton_action), L7:SCC#96(type::tripleton_action), L7:SCC#97(type::twoxtwo_action), L0:SCC#98(type::ClpSolve), L0:SCC#99(type::ClpTrustedData), L0:SCC#100(type::Clp_scalars), L0:SCC#101(file_free::IdiSolve), L0:SCC#102(type::IdiotResult), L3:SCC#104(type::ClpMessage), L4:SCC#108(type::CoinMpsCardReader)
+
+   --- Cross-Class Cycle Analysis for Multi-Node SCCs in Graph 1 ---
+
+   === SCC #55 (Layer 1, size=2) ===
+   Internal edge weight totals: Dict("field_type" => 0, "virtual_dispatch" => 0, "inherits" => 0, "overrides" => 0, "member_field_access" => 0, "calls" => 10)
+   Internal module pairs (2 directed pairs):
+     file_free::CoinPresolveMatrix      -> file_free::CoinPresolveHelperFunctions | tot=   6 (calls=  6, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] presolve_find_row3 --[calls]--> presolve_find_minor3
+         e.g. [1] presolve_delete_from_col2 --[calls]--> presolve_delete_from_major2
+         e.g. [1] presolve_expand_row --[calls]--> presolve_expand_major
+     file_free::CoinPresolveHelperFunctions -> file_free::CoinPresolveMatrix      | tot=   4 (calls=  4, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] presolve_delete_from_major2 --[calls]--> DIE
+         e.g. [1] presolve_expand_major --[calls]--> PRESOLVE_REMOVE_LINK
+         e.g. [1] presolve_expand_major --[calls]--> PRESOLVE_INSERT_LINK
+
+   === SCC #71 (Layer 1, size=4) ===
+   Internal edge weight totals: Dict("field_type" => 0, "virtual_dispatch" => 3, "inherits" => 3, "overrides" => 4, "member_field_access" => 0, "calls" => 6)
+   Internal module pairs (6 directed pairs):
+     type::CoinPlainFileOutput          -> type::CoinFileOutput               | tot=   4 (calls=  1, mfa=  0, ft= 0, inh/ov= 3, vcall=  0)
+         e.g. [1] CoinPlainFileOutput::CoinPlainFileOutput --[calls]--> CoinFileOutput::CoinFileOutput
+         e.g. [1] CoinPlainFileOutput --[inherits]--> CoinFileOutput
+         e.g. [1] CoinPlainFileOutput::write --[overrides]--> CoinFileOutput::write
+     type::CoinBzip2FileOutput          -> type::CoinFileOutput               | tot=   3 (calls=  1, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [1] CoinBzip2FileOutput::CoinBzip2FileOutput --[calls]--> CoinFileOutput::CoinFileOutput
+         e.g. [1] CoinBzip2FileOutput::write --[overrides]--> CoinFileOutput::write
+         e.g. [1] CoinBzip2FileOutput --[inherits]--> CoinFileOutput
+     type::CoinGzipFileOutput           -> type::CoinFileOutput               | tot=   3 (calls=  1, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [1] CoinGzipFileOutput::write --[overrides]--> CoinFileOutput::write
+         e.g. [1] CoinGzipFileOutput::CoinGzipFileOutput --[calls]--> CoinFileOutput::CoinFileOutput
+         e.g. [1] CoinGzipFileOutput --[inherits]--> CoinFileOutput
+     type::CoinFileOutput               -> type::CoinBzip2FileOutput          | tot=   2 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  1)
+         e.g. [1] CoinFileOutput::create --[calls]--> CoinBzip2FileOutput::CoinBzip2FileOutput
+         e.g. [1] CoinFileOutput::puts --[vcall via CoinFileOutput::write]--> CoinBzip2FileOutput::write
+     type::CoinFileOutput               -> type::CoinGzipFileOutput           | tot=   2 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  1)
+         e.g. [1] CoinFileOutput::create --[calls]--> CoinGzipFileOutput::CoinGzipFileOutput
+         e.g. [1] CoinFileOutput::puts --[vcall via CoinFileOutput::write]--> CoinGzipFileOutput::write
+     type::CoinFileOutput               -> type::CoinPlainFileOutput          | tot=   2 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  1)
+         e.g. [1] CoinFileOutput::create --[calls]--> CoinPlainFileOutput::CoinPlainFileOutput
+         e.g. [1] CoinFileOutput::puts --[vcall via CoinFileOutput::write]--> CoinPlainFileOutput::write
+
+   === SCC #105 (Layer 1, size=5) ===
+   Internal edge weight totals: Dict("field_type" => 0, "virtual_dispatch" => 2, "inherits" => 4, "overrides" => 4, "member_field_access" => 0, "calls" => 7)
+   Internal module pairs (9 directed pairs):
+     type::CoinBzip2FileInput           -> type::CoinGetslessFileInput        | tot=   3 (calls=  1, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [1] CoinBzip2FileInput --[inherits]--> CoinGetslessFileInput
+         e.g. [1] CoinBzip2FileInput::readRaw --[overrides]--> CoinGetslessFileInput::readRaw
+         e.g. [1] CoinBzip2FileInput::CoinBzip2FileInput --[calls]--> CoinGetslessFileInput::CoinGetslessFileInput
+     type::CoinGetslessFileInput        -> type::CoinFileInput                | tot=   3 (calls=  1, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [1] CoinGetslessFileInput::gets --[overrides]--> CoinFileInput::gets
+         e.g. [1] CoinGetslessFileInput::CoinGetslessFileInput --[calls]--> CoinFileInput::CoinFileInput
+         e.g. [1] CoinGetslessFileInput --[inherits]--> CoinFileInput
+     type::CoinGzipFileInput            -> type::CoinGetslessFileInput        | tot=   3 (calls=  1, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [1] CoinGzipFileInput::readRaw --[overrides]--> CoinGetslessFileInput::readRaw
+         e.g. [1] CoinGzipFileInput::CoinGzipFileInput --[calls]--> CoinGetslessFileInput::CoinGetslessFileInput
+         e.g. [1] CoinGzipFileInput --[inherits]--> CoinGetslessFileInput
+     type::CoinPlainFileInput           -> type::CoinFileInput                | tot=   3 (calls=  1, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [1] CoinPlainFileInput --[inherits]--> CoinFileInput
+         e.g. [1] CoinPlainFileInput::CoinPlainFileInput --[calls]--> CoinFileInput::CoinFileInput
+         e.g. [1] CoinPlainFileInput::gets --[overrides]--> CoinFileInput::gets
+     type::CoinFileInput                -> type::CoinBzip2FileInput           | tot=   1 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] CoinFileInput::create --[calls]--> CoinBzip2FileInput::CoinBzip2FileInput
+     type::CoinFileInput                -> type::CoinGzipFileInput            | tot=   1 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] CoinFileInput::create --[calls]--> CoinGzipFileInput::CoinGzipFileInput
+     type::CoinFileInput                -> type::CoinPlainFileInput           | tot=   1 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] CoinFileInput::create --[calls]--> CoinPlainFileInput::CoinPlainFileInput
+     type::CoinGetslessFileInput        -> type::CoinBzip2FileInput           | tot=   1 (calls=  0, mfa=  0, ft= 0, inh/ov= 0, vcall=  1)
+         e.g. [1] CoinGetslessFileInput::gets --[vcall via CoinGetslessFileInput::readRaw]--> CoinBzip2FileInput::readRaw
+     type::CoinGetslessFileInput        -> type::CoinGzipFileInput            | tot=   1 (calls=  0, mfa=  0, ft= 0, inh/ov= 0, vcall=  1)
+         e.g. [1] CoinGetslessFileInput::gets --[vcall via CoinGetslessFileInput::readRaw]--> CoinGzipFileInput::readRaw
+
+   === SCC #37 (Layer 3, size=2) ===
+   Internal edge weight totals: Dict("field_type" => 0, "virtual_dispatch" => 1, "inherits" => 1, "overrides" => 1, "member_field_access" => 0, "calls" => 8)
+   Internal module pairs (2 directed pairs):
+     type::ClpLpMsgHandler              -> type::CoinMessageHandler           | tot=  10 (calls=  8, mfa=  0, ft= 0, inh/ov= 2, vcall=  0)
+         e.g. [5] ClpLpMsgHandler::print --[calls]--> CoinMessageHandler::messageBuffer
+         e.g. [2] ClpLpMsgHandler::print --[calls]--> CoinMessageHandler::currentMessage
+         e.g. [1] ClpLpMsgHandler::print --[calls]--> CoinMessageHandler::print
+     type::CoinMessageHandler           -> type::ClpLpMsgHandler              | tot=   1 (calls=  0, mfa=  0, ft= 0, inh/ov= 0, vcall=  1)
+         e.g. [1] CoinMessageHandler::internalPrint --[vcall via CoinMessageHandler::print]--> ClpLpMsgHandler::print
+
+   === SCC #108 (Layer 4, size=2) ===
+   Internal edge weight totals: Dict("field_type" => 2, "virtual_dispatch" => 0, "inherits" => 0, "overrides" => 0, "member_field_access" => 0, "calls" => 236)
+   Internal module pairs (2 directed pairs):
+     type::CoinMpsIO                    -> type::CoinMpsCardReader            | tot= 235 (calls=234, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+         e.g. [30] CoinMpsIO::readMps --[calls]--> CoinMpsCardReader::card
+         e.g. [22] CoinMpsIO::readMps --[calls]--> CoinMpsCardReader::cardNumber
+         e.g. [20] CoinMpsIO::readMps --[calls]--> CoinMpsCardReader::columnName
+     type::CoinMpsCardReader            -> type::CoinMpsIO                    | tot=   3 (calls=  2, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+         e.g. [1] CoinMpsCardReader::CoinMpsCardReader --[calls]--> CoinMpsIO::messageHandler
+         e.g. [1] CoinMpsCardReader --[field_type]--> CoinMpsIO
+         e.g. [1] CoinMpsCardReader::CoinMpsCardReader --[calls]--> CoinMpsIO::messages
+
+   === SCC #69 (Layer 6, size=2) ===
+   Internal edge weight totals: Dict("field_type" => 0, "virtual_dispatch" => 0, "inherits" => 0, "overrides" => 0, "member_field_access" => 0, "calls" => 5)
+   Internal module pairs (2 directed pairs):
+     type::drop_zero_coefficients_action -> file_free::CoinPresolveZeros       | tot=   4 (calls=  4, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] drop_zero_coefficients_action::presolve --[calls]--> drop_col_zeros
+         e.g. [1] drop_zero_coefficients_action::presolve --[calls]--> count_col_zeros
+         e.g. [1] drop_zero_coefficients_action::presolve --[calls]--> count_col_zeros2
+     file_free::CoinPresolveZeros       -> type::drop_zero_coefficients_action | tot=   1 (calls=  1, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [1] drop_zero_coefficients --[calls]--> drop_zero_coefficients_action::presolve
+
+   === SCC #109 (Layer 9, size=34) ===
+   Internal edge weight totals: Dict("field_type" => 26, "virtual_dispatch" => 300, "inherits" => 15, "overrides" => 84, "member_field_access" => 6348, "calls" => 3493)
+   Internal module pairs (192 directed pairs):
+     type::ClpSimplex                   -> type::ClpModel                     | tot=2576 (calls=551, mfa=2024, ft= 0, inh/ov= 1, vcall=  0)
+         e.g. [329] ClpSimplex::createRim --[member_field_access]--> ClpModel
+         e.g. [203] ClpSimplex::initialSolve --[member_field_access]--> ClpModel
+         e.g. [101] ClpSimplex::dual --[member_field_access]--> ClpModel
+     type::ClpSimplexDual               -> type::ClpSimplex                   | tot=1603 (calls=213, mfa=1389, ft= 0, inh/ov= 1, vcall=  0)
+         e.g. [364] ClpSimplexDual::whileIterating --[member_field_access]--> ClpSimplex
+         e.g. [344] ClpSimplexDual::statusOfProblemInDual --[member_field_access]--> ClpSimplex
+         e.g. [131] ClpSimplexDual::dualColumn --[member_field_access]--> ClpSimplex
+     type::ClpSimplexPrimal             -> type::ClpSimplex                   | tot=1219 (calls=113, mfa=1105, ft= 0, inh/ov= 1, vcall=  0)
+         e.g. [371] ClpSimplexPrimal::statusOfProblemInPrimal --[member_field_access]--> ClpSimplex
+         e.g. [214] ClpSimplexPrimal::pivotResult --[member_field_access]--> ClpSimplex
+         e.g. [184] ClpSimplexPrimal::primalRow --[member_field_access]--> ClpSimplex
+     type::ClpSimplexDual               -> type::ClpModel                     | tot= 718 (calls= 18, mfa=700, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [221] ClpSimplexDual::statusOfProblemInDual --[member_field_access]--> ClpModel
+         e.g. [128] ClpSimplexDual::whileIterating --[member_field_access]--> ClpModel
+         e.g. [78] ClpSimplexDual::changeBounds --[member_field_access]--> ClpModel
+     type::ClpSimplexPrimal             -> type::ClpModel                     | tot= 385 (calls= 12, mfa=373, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [169] ClpSimplexPrimal::statusOfProblemInPrimal --[member_field_access]--> ClpModel
+         e.g. [67] ClpSimplexPrimal::primal --[member_field_access]--> ClpModel
+         e.g. [42] ClpSimplexPrimal::pivotResult --[member_field_access]--> ClpModel
+     type::ClpPrimalColumnSteepest      -> type::ClpPrimalColumnPivot         | tot= 346 (calls=  2, mfa=334, ft= 0, inh/ov=10, vcall=  0)
+         e.g. [53] ClpPrimalColumnSteepest::pivotColumnOldMethod --[member_field_access]--> ClpPrimalColumnPivot
+         e.g. [50] ClpPrimalColumnSteepest::pivotColumn --[member_field_access]--> ClpPrimalColumnPivot
+         e.g. [39] ClpPrimalColumnSteepest::partialPricing --[member_field_access]--> ClpPrimalColumnPivot
+     type::ClpPrimalColumnSteepest      -> type::ClpSimplex                   | tot= 197 (calls=192, mfa=  5, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [5] ClpPrimalColumnSteepest::pivotColumnOldMethod --[calls]--> ClpSimplex::getStatus
+         e.g. [4] ClpPrimalColumnSteepest::pivotColumn --[calls]--> ClpSimplex::factorization
+         e.g. [4] ClpPrimalColumnSteepest::pivotColumnOldMethod --[calls]--> ClpSimplex::factorization
+     type::Idiot                        -> type::ClpModel                     | tot= 110 (calls=110, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [9] Idiot::crossOver --[calls]--> ClpModel::clpMatrix
+         e.g. [9] Idiot::crossOver --[calls]--> ClpModel::numberRows
+         e.g. [5] Idiot::crossOver --[calls]--> ClpModel::columnLower
+     type::ClpPackedMatrix              -> type::ClpModel                     | tot= 108 (calls=108, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [6] ClpPackedMatrix::scale --[calls]--> ClpModel::scalingFlag
+         e.g. [4] ClpPackedMatrix::scale --[calls]--> ClpModel::specialOptions
+         e.g. [4] ClpPackedMatrix::transposeTimesByColumn --[calls]--> ClpModel::statusArray
+     type::ClpPrimalColumnSteepest      -> type::ClpModel                     | tot= 106 (calls=106, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [9] ClpPrimalColumnSteepest::partialPricing --[calls]--> ClpModel::clpMatrix
+         e.g. [7] ClpPrimalColumnSteepest::pivotColumn --[calls]--> ClpModel::clpMatrix
+         e.g. [5] ClpPrimalColumnSteepest::pivotColumnOldMethod --[calls]--> ClpModel::clpMatrix
+     type::ClpPresolve                  -> type::ClpModel                     | tot=  95 (calls= 95, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [7] ClpPresolve::postsolve --[calls]--> ClpModel::statusArray
+         e.g. [4] ClpPresolve::postsolve --[calls]--> ClpModel::setProblemStatus
+         e.g. [4] ClpPresolve::postsolve --[calls]--> ClpModel::primalRowSolution
+     type::ClpDualRowSteepest           -> type::ClpDualRowPivot              | tot=  92 (calls=  2, mfa= 80, ft= 0, inh/ov=10, vcall=  0)
+         e.g. [25] ClpDualRowSteepest::pivotRow --[member_field_access]--> ClpDualRowPivot
+         e.g. [16] ClpDualRowSteepest::updateWeights --[member_field_access]--> ClpDualRowPivot
+         e.g. [15] ClpDualRowSteepest::saveWeights --[member_field_access]--> ClpDualRowPivot
+     type::ClpSimplexPrimal             -> type::ClpNonLinearCost             | tot=  84 (calls= 84, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [15] ClpSimplexPrimal::statusOfProblemInPrimal --[calls]--> ClpNonLinearCost::numberInfeasibilities
+         e.g. [14] ClpSimplexPrimal::statusOfProblemInPrimal --[calls]--> ClpNonLinearCost::sumInfeasibilities
+         e.g. [12] ClpSimplexPrimal::statusOfProblemInPrimal --[calls]--> ClpNonLinearCost::checkInfeasibilities
+     type::ClpSimplexDual               -> type::ClpFactorization             | tot=  79 (calls= 79, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [26] ClpSimplexDual::whileIterating --[calls]--> ClpFactorization::pivots
+         e.g. [18] ClpSimplexDual::statusOfProblemInDual --[calls]--> ClpFactorization::pivotTolerance
+         e.g. [6] ClpSimplexDual::statusOfProblemInDual --[calls]--> ClpFactorization::setDenseThreshold
+     type::ClpSimplexOther              -> type::ClpModel                     | tot=  79 (calls= 24, mfa= 55, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [25] ClpSimplexOther::cleanupAfterPostsolve --[member_field_access]--> ClpModel
+         e.g. [15] ClpSimplexOther::dualOfModel --[member_field_access]--> ClpModel
+         e.g. [15] ClpSimplexOther::writeBasis --[member_field_access]--> ClpModel
+     type::ClpPackedMatrix              -> type::ClpMatrixBase                | tot=  70 (calls= 10, mfa= 19, ft= 0, inh/ov=41, vcall=  0)
+         e.g. [14] ClpPackedMatrix::partialPricing --[member_field_access]--> ClpMatrixBase
+         e.g. [5] ClpPackedMatrix::ClpPackedMatrix --[calls]--> ClpMatrixBase::ClpMatrixBase
+         e.g. [4] ClpPackedMatrix::ClpPackedMatrix --[member_field_access]--> ClpMatrixBase
+     type::ClpSimplex                   -> type::ClpMatrixBase                | tot=  68 (calls= 68, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [4] ClpSimplex::initialSolve --[calls]--> ClpMatrixBase::transposeTimes
+         e.g. [3] ClpSimplex::initialSolve --[calls]--> ClpMatrixBase::times
+         e.g. [3] ClpSimplex::computeDuals --[calls]--> ClpMatrixBase::dualExpanded
+     type::ClpDualRowSteepest           -> type::ClpSimplex                   | tot=  67 (calls= 63, mfa=  4, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [8] ClpDualRowSteepest::updateWeights --[calls]--> ClpSimplex::factorization
+         e.g. [6] ClpDualRowSteepest::updateWeights --[calls]--> ClpSimplex::alpha
+         e.g. [4] ClpDualRowSteepest::pivotRow --[calls]--> ClpSimplex::largestPrimalError
+     type::ClpFactorization             -> type::ClpSimplex                   | tot=  66 (calls= 66, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+         e.g. [14] ClpFactorization::factorize --[calls]--> ClpSimplex::setColumnStatus
+         e.g. [9] ClpFactorization::factorize --[calls]--> ClpSimplex::setRowStatus
+         e.g. [9] ClpFactorization::factorize --[calls]--> ClpSimplex::getRowStatus
+     type::ClpNonLinearCost             -> type::ClpSimplex                   | tot=  65 (calls= 64, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+         e.g. [16] ClpNonLinearCost::checkInfeasibilities --[calls]--> ClpSimplex::setStatus
+         e.g. [8] ClpNonLinearCost::setOne --[calls]--> ClpSimplex::setStatus
+         e.g. [2] ClpNonLinearCost::checkInfeasibilities --[calls]--> ClpSimplex::getStatus
+     type::ClpSimplex                   -> type::ClpFactorization             | tot=  62 (calls= 61, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     type::Idiot                        -> type::ClpSimplex                   | tot=  59 (calls= 58, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     type::ClpPackedMatrix              -> type::ClpSimplex                   | tot=  56 (calls= 50, mfa=  6, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpSimplex                   -> type::ClpPackedMatrix              | tot=  56 (calls= 18, mfa=  0, ft= 0, inh/ov= 0, vcall= 38)
+     type::ClpModel                     -> type::ClpPackedMatrix              | tot=  54 (calls= 12, mfa=  0, ft= 1, inh/ov= 0, vcall= 41)
+     type::ClpSimplex                   -> type::Idiot                        | tot=  48 (calls= 48, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpSimplexPrimal             -> type::ClpSimplexProgress           | tot=  48 (calls= 35, mfa= 13, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPEPrimalColumnSteepest    -> type::ClpPrimalColumnPivot         | tot=  46 (calls=  0, mfa= 46, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpSimplexPrimal             -> type::ClpFactorization             | tot=  46 (calls= 46, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPEDualRowSteepest         -> type::ClpPESimplex                 | tot=  44 (calls= 43, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     type::ClpModel                     -> type::ClpMatrixBase                | tot=  43 (calls= 41, mfa=  0, ft= 2, inh/ov= 0, vcall=  0)
+     type::ClpPEPrimalColumnDantzig     -> type::ClpPESimplex                 | tot=  42 (calls= 41, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     type::ClpSimplexDual               -> type::ClpSimplexProgress           | tot=  42 (calls= 36, mfa=  6, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPEDualRowDantzig          -> type::ClpPESimplex                 | tot=  40 (calls= 39, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     type::ClpPEDualRowSteepest         -> type::ClpDualRowPivot              | tot=  40 (calls=  0, mfa= 40, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPEPrimalColumnSteepest    -> type::ClpPESimplex                 | tot=  40 (calls= 39, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     type::ClpSimplexProgress           -> type::ClpSimplex                   | tot=  39 (calls= 38, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     file_free::ClpPresolve             -> type::ClpModel                     | tot=  38 (calls= 38, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPEPrimalColumnSteepest    -> type::ClpPrimalColumnSteepest      | tot=  37 (calls= 10, mfa= 22, ft= 0, inh/ov= 5, vcall=  0)
+     type::ClpPrimalColumnSteepest      -> type::ClpMatrixBase                | tot=  35 (calls= 35, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPrimalColumnSteepest      -> type::ClpFactorization             | tot=  32 (calls= 32, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPackedMatrix3             -> type::ClpSimplex                   | tot=  30 (calls= 27, mfa=  3, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpPEDualRowSteepest         -> type::ClpSimplex                   | tot=  28 (calls= 28, mfa=  0, ft= 0, inh/ov= 0, vcall=  0)
+     type::ClpSimplexOther              -> type::ClpSimplex                   | tot=  27 (calls= 26, mfa=  0, ft= 0, inh/ov= 1, vcall=  0)
+     type::ClpSimplex                   -> type::ClpNonLinearCost             | tot=  26 (calls= 25, mfa=  0, ft= 1, inh/ov= 0, vcall=  0)
+     ... (147 more directed pairs)
+
+5. GRAPH 2: V1 FINE-GRAINED METHOD/FUNCTION (MF) CALL GRAPH
+   Defined V1 MF nodes: 1479
+   Directed call+vdispatch edges: 5172
+   Total SCCs: 1475
+   Pure singletons: 1472
+   Multi-node MF SCCs: 3 (covering 7 MF nodes)
+   Max topological layer: 21
+
+   --- All Multi-Node MF SCCs ---
+   MF-SCC #1083 (Layer 17, size=3, loc=842):
+     - ClpSimplex::dual [Clp/src/ClpSimplex.cpp:5637, loc=513]
+     - ClpSimplex::primal [Clp/src/ClpSimplex.cpp:6151, loc=307]
+     - ClpSimplex::reducedGradient [Clp/src/ClpSimplex.cpp:6606, loc=22]
+   MF-SCC #619 (Layer 4, size=2, loc=130):
+     - CoinPackedMatrix::reverseOrderedCopyOf [CoinUtils/src/CoinPackedMatrix.cpp:885, loc=122]
+     - CoinPackedMatrix::reverseOrdering [CoinUtils/src/CoinPackedMatrix.cpp:1059, loc=8]
+   MF-SCC #1337 (Layer 11, size=2, loc=286):
+     - ClpSimplex::ClpSimplex [Clp/src/ClpSimplex.cpp:2497, loc=109]
+     - ClpSimplex::gutsOfCopy [Clp/src/ClpSimplex.cpp:2734, loc=177]
+
+   --- MF Node Distribution Across Layers (0..21) ---
+   Layer  0:  740 MF nodes |   7672 LOC | top: ClpSimplex(125), ClpModel(110), CoinUtils helpers/sort/error/message(71), CoinPresolve*(60)
+   Layer  1:  248 MF nodes |  11834 LOC | top: ClpPackedMatrix (+ ClpMatrixBase)(41), CoinPresolve*(37), CoinFactorization(33), CoinUtils helpers/sort/error/message(31)
+   Layer  2:  112 MF nodes |   4933 LOC | top: CoinUtils helpers/sort/error/message(18), CoinPresolve*(14), ClpPackedMatrix (+ ClpMatrixBase)(13), ClpSimplex(12)
+   Layer  3:   90 MF nodes |   7579 LOC | top: CoinPackedMatrix(14), ClpModel(13), CoinPresolve*(10), CoinUtils helpers/sort/error/message(9)
+   Layer  4:   67 MF nodes |   6984 LOC | top: CoinPackedMatrix(12), CoinFactorization(9), CoinPresolve*(7), ClpPackedMatrix (+ ClpMatrixBase)(5)
+   Layer  5:   41 MF nodes |   5669 LOC | top: CoinFactorization(8), CoinPresolve*(7), ClpPackedMatrix (+ ClpMatrixBase)(5), CoinPackedMatrix(4)
+   Layer  6:   33 MF nodes |   2942 LOC | top: ClpPrimalColumnSteepest/Dantzig(9), ClpSimplex(4), CoinFactorization(4), CoinPackedMatrix(3)
+   Layer  7:   28 MF nodes |   2678 LOC | top: ClpPrimalColumnSteepest/Dantzig(6), ClpFactorization(4), ClpSimplex(4), ClpDualRowSteepest/Dantzig(4)
+   Layer  8:   18 MF nodes |   1378 LOC | top: ClpDualRowSteepest/Dantzig(5), ClpSimplex(4), ClpModel(3), ClpPrimalColumnSteepest/Dantzig(2)
+   Layer  9:   40 MF nodes |  14731 LOC | top: CoinPresolve*(11), ClpSimplex(9), CoinMpsIO(5), ClpModel(4)
+   Layer 10:   18 MF nodes |   5882 LOC | top: ClpModel(4), ClpPrimalColumnSteepest/Dantzig(3), CoinMpsIO(2), ClpSimplexDual(2)
+   Layer 11:   12 MF nodes |   3414 LOC | top: ClpSimplex(6), ClpPrimalColumnSteepest/Dantzig(1), ClpSolve(1), CoinMpsIO(1)
+   Layer 12:   12 MF nodes |   2796 LOC | top: ClpSimplex(5), ClpSolve(2), ClpSimplexPrimal(2), CoinMpsIO(1)
+   Layer 13:    5 MF nodes |   2608 LOC | top: ClpSimplexDual(2), ClpPresolve(2), ClpSimplexPrimal(1)
+   Layer 14:    2 MF nodes |    726 LOC | top: ClpSimplexPrimal(1), ClpSimplexDual(1)
+   Layer 15:    2 MF nodes |    326 LOC | top: ClpSimplexPrimal(1), ClpSimplexDual(1)
+   Layer 16:    1 MF nodes |    468 LOC | top: ClpSimplexPrimal(1)
+   Layer 17:    3 MF nodes |    842 LOC | top: ClpSimplex(3)
+   Layer 18:    3 MF nodes |   3771 LOC | top: ClpModel(1), ClpSimplex(1), Idiot(1)
+   Layer 19:    2 MF nodes |    166 LOC | top: ClpModel(1), Idiot(1)
+   Layer 20:    1 MF nodes |   3225 LOC | top: ClpSimplex(1)
+   Layer 21:    1 MF nodes |      6 LOC | top: ClpSimplex(1)
+
+6. KEY V1 CLUSTER DEPENDENCY PROFILES (INTERNAL vs EXTERNAL)
+
+   [Cluster] CoinUtils helpers/sort/error/message
+     Modules (39): enum::COIN_Message, enum::CoinMessageMarker, file_free::CoinFileIO, file_free::CoinFinite, file_free::CoinHelperFunctions, file_free::CoinSort, file_free::CoinTime, type::CoinAbsFltEq, type::CoinArrayWithLength, type::CoinBzip2FileInput, type::CoinBzip2FileOutput, type::CoinDoubleArrayWithLength, type::CoinError, type::CoinFactorizationDoubleArrayWithLength, type::CoinFileIOBase, type::CoinFileInput, type::CoinFileOutput, type::CoinFirstLess_2, type::CoinGetslessFileInput, type::CoinGzipFileInput, type::CoinGzipFileOutput, type::CoinIntArrayWithLength, type::CoinMessage, type::CoinMessageHandler, type::CoinMessages, type::CoinOneMessage, type::CoinPair, type::CoinPlainFileInput, type::CoinPlainFileOutput, type::CoinRelFltEq, type::CoinTable, type::CoinThreadRandom, type::CoinUnsignedIntArrayWithLength, type::Coin_message, typedef::CoinBigIndex, typedef::CoinByteArray, typedef::CoinFactorizationDouble, typedef::CoinFactorizationDouble2, typedef::CoinSighandler_t
+     Defined MFs: 137 | LOC: 2270 | Graph1 SCC layers: [0, 1, 2, 3] | Internal calls: 111
+     Outgoing deps (2): CoinTable(4), ClpOutput/Events(1)
+     Incoming deps (20): CoinFactorization(471), ClpSimplex(457), CoinMpsIO(291), ClpSimplexDual(166), CoinPresolve*(146), ClpModel(143), ClpSimplexPrimal(110), CoinPackedMatrix(88), Idiot(80), ClpPresolve(67), ClpPackedMatrix (+ ClpMatrixBase)(52), ClpOutput/Events(40), ClpPrimalColumnSteepest/Dantzig(27), CoinIndexedVector(20), ClpSolve(14), ClpNonLinearCost(10), ClpDualRowSteepest/Dantzig(9), CoinDenseFactorization(7), ClpFactorization(4), Other(CoinBuild)(1)
+
+   [Cluster] CoinIndexedVector
+     Modules (1): type::CoinIndexedVector
+     Defined MFs: 28 | LOC: 444 | Graph1 SCC layers: [2] | Internal calls: 8
+     Outgoing deps (1): CoinUtils helpers/sort/error/message(20)
+     Incoming deps (12): ClpPrimalColumnSteepest/Dantzig(360), CoinFactorization(176), ClpPackedMatrix (+ ClpMatrixBase)(157), ClpSimplexDual(120), ClpDualRowSteepest/Dantzig(116), ClpSimplex(68), ClpSimplexPrimal(49), CoinDenseFactorization(37), CoinPresolve*(8), ClpModel(6), ClpFactorization(3), ClpNonLinearCost(2)
+
+   [Cluster] CoinPackedVector/CoinShallowPackedVector
+     Modules (3): type::CoinPackedVector, type::CoinPackedVectorBase, type::CoinShallowPackedVector
+     Defined MFs: 6 | LOC: 6 | Graph1 SCC layers: [0, 1] | Internal calls: 0
+     Outgoing deps (0): NONE
+     Incoming deps (1): CoinPackedMatrix(11)
+
+   [Cluster] CoinPackedMatrix
+     Modules (2): file_free::CoinPackedMatrix, type::CoinPackedMatrix
+     Defined MFs: 72 | LOC: 2393 | Graph1 SCC layers: [2, 3] | Internal calls: 76
+     Outgoing deps (2): CoinUtils helpers/sort/error/message(88), CoinPackedVector/CoinShallowPackedVector(33)
+     Incoming deps (11): ClpPackedMatrix (+ ClpMatrixBase)(190), ClpSimplex(74), ClpModel(46), ClpPresolve(41), CoinMpsIO(23), Idiot(15), CoinPresolve*(9), ClpSimplexDual(8), CoinFactorization(6), ClpSolve(4), ClpFactorization(2)
+
+   [Cluster] CoinDenseFactorization
+     Modules (2): type::CoinDenseFactorization, type::CoinOtherFactorization
+     Defined MFs: 42 | LOC: 978 | Graph1 SCC layers: [1, 3] | Internal calls: 13
+     Outgoing deps (3): CoinIndexedVector(37), CoinUtils helpers/sort/error/message(7), CoinFactorization(4)
+     Incoming deps (1): ClpFactorization(60)
+
+   [Cluster] CoinFactorization
+     Modules (6): file_free::CoinFactorization2, file_free::CoinFactorization4, type::CoinFactorization, typedef::CoinCheckZero, typedef::cipfint, typedef::ipfint
+     Defined MFs: 114 | LOC: 8499 | Graph1 SCC layers: [0, 4] | Internal calls: 132
+     Outgoing deps (3): CoinUtils helpers/sort/error/message(471), CoinIndexedVector(176), CoinPackedMatrix(6)
+     Incoming deps (4): ClpFactorization(134), CoinPresolve*(8), Idiot(5), CoinDenseFactorization(4)
+
+   [Cluster] CoinPresolve*
+     Modules (38): file_free::CoinPresolveDoubleton, file_free::CoinPresolveDupcol, file_free::CoinPresolveFixed, file_free::CoinPresolveForcing, file_free::CoinPresolveHelperFunctions, file_free::CoinPresolveImpliedFree, file_free::CoinPresolveMatrix, file_free::CoinPresolveSubst, file_free::CoinPresolveTripleton, file_free::CoinPresolveUseless, file_free::CoinPresolveZeros, type::CoinPostsolveMatrix, type::CoinPrePostsolveMatrix, type::CoinPresolveAction, type::CoinPresolveMatrix, type::do_tighten_action, type::doubleton_action, type::drop_empty_cols_action, type::drop_empty_rows_action, type::drop_zero_coefficients_action, type::dropped_zero, type::dupcol_action, type::duprow3_action, type::duprow_action, type::forcing_constraint_action, type::gubrow_action, type::implied_free_action, type::isolated_constraint_action, type::make_fixed_action, type::presolvehlink, type::remove_dual_action, type::remove_fixed_action, type::slack_doubleton_action, type::slack_singleton_action, type::subst_constraint_action, type::tripleton_action, type::twoxtwo_action, type::useless_constraint_action
+     Defined MFs: 147 | LOC: 15169 | Graph1 SCC layers: [0, 1, 2, 4, 5, 6, 7, 8] | Internal calls: 435
+     Outgoing deps (4): CoinUtils helpers/sort/error/message(146), CoinPackedMatrix(9), CoinIndexedVector(8), CoinFactorization(8)
+     Incoming deps (1): ClpPresolve(526)
+
+   [Cluster] CoinMpsIO
+     Modules (7): enum::COINMpsType, enum::COINSectionType, file_free::CoinMpsIO, type::CoinMpsCardReader, type::CoinMpsIO, typedef::COINColumnIndex, typedef::COINRowIndex
+     Defined MFs: 82 | LOC: 4913 | Graph1 SCC layers: [0, 2, 4] | Internal calls: 415
+     Outgoing deps (4): CoinUtils helpers/sort/error/message(302), CoinPackedMatrix(23), Other(CoinSet)(4), Other(CoinSosSet)(2)
+     Incoming deps (2): ClpModel(34), ClpSimplex(1)
+
+   [Cluster] CoinTable
+     Modules (1): file_free::CoinTable
+     Defined MFs: 1 | LOC: 5 | Graph1 SCC layers: [0] | Internal calls: 0
+     Outgoing deps (0): NONE
+     Incoming deps (1): CoinUtils helpers/sort/error/message(4)
+
+   [Cluster] ClpHelperFunctions
+     Modules (1): file_free::ClpHelperFunctions
+     Defined MFs: 2 | LOC: 18 | Graph1 SCC layers: [0] | Internal calls: 0
+     Outgoing deps (0): NONE
+     Incoming deps (2): ClpSimplex(2), ClpSimplexDual(1)
+
+   [Cluster] ClpPackedMatrix (+ ClpMatrixBase)
+     Modules (6): file_free::ClpPackedMatrix, type::ClpMatrixBase, type::ClpPackedMatrix, type::ClpPackedMatrix2, type::ClpPackedMatrix3, type::blockStruct
+     Defined MFs: 125 | LOC: 8159 | Graph1 SCC layers: [1, 9] | Internal calls: 96
+     Outgoing deps (7): ClpSimplex(193), CoinPackedMatrix(190), CoinIndexedVector(157), ClpModel(140), CoinUtils helpers/sort/error/message(52), ClpFactorization(2), ClpPrimalColumnSteepest/Dantzig(2)
+     Incoming deps (10): ClpSimplex(91), ClpModel(56), ClpPrimalColumnSteepest/Dantzig(40), ClpSimplexDual(27), ClpSimplexPrimal(22), Idiot(16), ClpFactorization(14), ClpPresolve(5), ClpNonLinearCost(2), ClpSolve(1)
+
+   [Cluster] ClpFactorization
+     Modules (1): type::ClpFactorization
+     Defined MFs: 42 | LOC: 1859 | Graph1 SCC layers: [9] | Internal calls: 19
+     Outgoing deps (9): CoinFactorization(134), CoinDenseFactorization(79), ClpSimplex(66), ClpModel(24), ClpPackedMatrix (+ ClpMatrixBase)(18), CoinUtils helpers/sort/error/message(4), CoinIndexedVector(3), CoinPackedMatrix(2), ClpSimplexDual(1)
+     Incoming deps (7): ClpSimplexDual(79), ClpSimplex(64), ClpSimplexPrimal(46), ClpPrimalColumnSteepest/Dantzig(38), ClpDualRowSteepest/Dantzig(16), ClpPackedMatrix (+ ClpMatrixBase)(2), ClpModel(1)
+
+   [Cluster] ClpNonLinearCost
+     Modules (2): file_free::ClpNonLinearCost, type::ClpNonLinearCost
+     Defined MFs: 30 | LOC: 1384 | Graph1 SCC layers: [0, 9] | Internal calls: 36
+     Outgoing deps (5): ClpSimplex(65), ClpModel(12), CoinUtils helpers/sort/error/message(10), ClpPackedMatrix (+ ClpMatrixBase)(2), CoinIndexedVector(2)
+     Incoming deps (4): ClpSimplexPrimal(84), ClpSimplex(26), ClpPrimalColumnSteepest/Dantzig(13), ClpSolve(3)
+
+   [Cluster] ClpDualRowSteepest/Dantzig
+     Modules (5): type::ClpDualRowDantzig, type::ClpDualRowPivot, type::ClpDualRowSteepest, type::ClpPEDualRowDantzig, type::ClpPEDualRowSteepest
+     Defined MFs: 41 | LOC: 1767 | Graph1 SCC layers: [9] | Internal calls: 22
+     Outgoing deps (5): ClpSimplex(205), CoinIndexedVector(116), ClpModel(37), ClpFactorization(16), CoinUtils helpers/sort/error/message(9)
+     Incoming deps (2): ClpSimplexDual(15), ClpSimplex(15)
+
+   [Cluster] ClpPrimalColumnSteepest/Dantzig
+     Modules (6): file_free::ClpPrimalColumnSteepest, type::ClpPEPrimalColumnDantzig, type::ClpPEPrimalColumnSteepest, type::ClpPrimalColumnDantzig, type::ClpPrimalColumnPivot, type::ClpPrimalColumnSteepest
+     Defined MFs: 58 | LOC: 5351 | Graph1 SCC layers: [2, 9] | Internal calls: 93
+     Outgoing deps (7): CoinIndexedVector(360), ClpSimplex(334), ClpModel(144), ClpPackedMatrix (+ ClpMatrixBase)(61), ClpFactorization(38), CoinUtils helpers/sort/error/message(27), ClpNonLinearCost(13)
+     Incoming deps (3): ClpSimplex(18), ClpSimplexPrimal(11), ClpPackedMatrix (+ ClpMatrixBase)(2)
+
+   [Cluster] ClpOutput/Events
+     Modules (8): file_free::ClpOutput, type::ClpDisasterHandler, type::ClpEventHandler, type::ClpLpEventHandler, type::ClpLpMsgHandler, type::ClpLpPhaseState, type::ClpOutput, type::ClpProgressEventHandler
+     Defined MFs: 27 | LOC: 449 | Graph1 SCC layers: [0, 2, 3, 9] | Internal calls: 32
+     Outgoing deps (3): CoinUtils helpers/sort/error/message(40), ClpSimplex(20), ClpModel(10)
+     Incoming deps (5): ClpSimplex(22), ClpModel(7), ClpSimplexPrimal(6), ClpSimplexDual(6), Idiot(1)
+
+   [Cluster] ClpPresolve
+     Modules (2): file_free::ClpPresolve, type::ClpPresolve
+     Defined MFs: 39 | LOC: 2445 | Graph1 SCC layers: [9] | Internal calls: 34
+     Outgoing deps (6): CoinPresolve*(547), ClpModel(159), CoinUtils helpers/sort/error/message(67), CoinPackedMatrix(41), ClpSimplex(23), ClpPackedMatrix (+ ClpMatrixBase)(9)
+     Incoming deps (2): ClpSimplex(12), Idiot(10)
+
+   [Cluster] Idiot
+     Modules (4): file_free::IdiSolve, file_free::Idiot, type::Idiot, type::IdiotResult
+     Defined MFs: 23 | LOC: 3728 | Graph1 SCC layers: [0, 9] | Internal calls: 15
+     Outgoing deps (8): ClpModel(114), CoinUtils helpers/sort/error/message(80), ClpSimplex(59), ClpPackedMatrix (+ ClpMatrixBase)(23), CoinPackedMatrix(15), ClpPresolve(10), CoinFactorization(5), ClpOutput/Events(3)
+     Incoming deps (1): ClpSimplex(48)
+
+   [Cluster] ClpModel
+     Modules (12): enum::CLP_Message, enum::ClpDblParam, enum::ClpStrParam, file_free::ClpModel, file_free::ClpModelParameters, type::ClpDataSave, type::ClpLinearObjective, type::ClpMessage, type::ClpModel, type::ClpObjective, type::ClpTrustedData, type::Clp_message
+     Defined MFs: 171 | LOC: 3813 | Graph1 SCC layers: [0, 1, 2, 3, 9] | Internal calls: 209
+     Outgoing deps (9): CoinUtils helpers/sort/error/message(143), ClpPackedMatrix (+ ClpMatrixBase)(97), CoinPackedMatrix(46), CoinMpsIO(34), ClpSimplex(17), ClpOutput/Events(15), CoinIndexedVector(6), Other(CoinBuild)(6), ClpFactorization(1)
+     Incoming deps (12): ClpSimplex(2750), ClpSimplexDual(723), ClpSimplexPrimal(391), ClpPresolve(157), ClpPrimalColumnSteepest/Dantzig(144), ClpPackedMatrix (+ ClpMatrixBase)(140), Idiot(114), ClpDualRowSteepest/Dantzig(37), ClpSolve(33), ClpFactorization(24), ClpNonLinearCost(12), ClpOutput/Events(10)
+
+   [Cluster] ClpSimplex
+     Modules (6): file_free::ClpSimplex, type::ClpPESimplex, type::ClpSimplex, type::ClpSimplexOther, type::Clp_scalars, type::clpTempInfo
+     Defined MFs: 205 | LOC: 15258 | Graph1 SCC layers: [0, 1, 9] | Internal calls: 545
+     Outgoing deps (18): ClpModel(2752), CoinUtils helpers/sort/error/message(457), ClpPackedMatrix (+ ClpMatrixBase)(134), CoinPackedMatrix(74), CoinIndexedVector(68), ClpFactorization(64), ClpSolve(56), Idiot(48), ClpOutput/Events(42), ClpPrimalColumnSteepest/Dantzig(32), ClpNonLinearCost(26), ClpDualRowSteepest/Dantzig(21), ClpPresolve(12), ClpSimplexDual(6), ClpSimplexPrimal(5), Other(CoinBuild)(3), ClpHelperFunctions(2), CoinMpsIO(1)
+     Incoming deps (12): ClpSimplexDual(1603), ClpSimplexPrimal(1219), ClpPrimalColumnSteepest/Dantzig(334), ClpDualRowSteepest/Dantzig(205), ClpPackedMatrix (+ ClpMatrixBase)(193), ClpFactorization(66), ClpNonLinearCost(65), Idiot(59), ClpSolve(40), ClpPresolve(23), ClpOutput/Events(20), ClpModel(17)
+
+   [Cluster] ClpSimplexDual
+     Modules (1): type::ClpSimplexDual
+     Defined MFs: 24 | LOC: 7177 | Graph1 SCC layers: [9] | Internal calls: 46
+     Outgoing deps (11): ClpSimplex(1603), ClpModel(723), CoinUtils helpers/sort/error/message(166), CoinIndexedVector(120), ClpFactorization(79), ClpDualRowSteepest/Dantzig(48), ClpPackedMatrix (+ ClpMatrixBase)(43), ClpSolve(42), ClpOutput/Events(14), CoinPackedMatrix(8), ClpHelperFunctions(1)
+     Incoming deps (3): ClpSimplex(6), ClpFactorization(1), ClpSolve(1)
+
+   [Cluster] ClpSimplexPrimal
+     Modules (1): type::ClpSimplexPrimal
+     Defined MFs: 13 | LOC: 3733 | Graph1 SCC layers: [9] | Internal calls: 41
+     Outgoing deps (10): ClpSimplex(1219), ClpModel(391), CoinUtils helpers/sort/error/message(110), ClpNonLinearCost(84), CoinIndexedVector(49), ClpSolve(48), ClpFactorization(46), ClpPrimalColumnSteepest/Dantzig(41), ClpPackedMatrix (+ ClpMatrixBase)(27), ClpOutput/Events(14)
+     Incoming deps (1): ClpSimplex(5)
+
+   [Cluster] ClpSolve
+     Modules (3): file_free::ClpSolve, type::ClpSimplexProgress, type::ClpSolve
+     Defined MFs: 36 | LOC: 647 | Graph1 SCC layers: [0, 9] | Internal calls: 5
+     Outgoing deps (7): ClpSimplex(40), ClpModel(33), CoinUtils helpers/sort/error/message(14), CoinPackedMatrix(4), ClpNonLinearCost(3), ClpPackedMatrix (+ ClpMatrixBase)(1), ClpSimplexDual(1)
+     Incoming deps (3): ClpSimplex(56), ClpSimplexPrimal(48), ClpSimplexDual(42)
+
+   [Cluster] Other(CoinBuild)
+     Modules (1): type::CoinBuild
+     Defined MFs: 8 | LOC: 121 | Graph1 SCC layers: [1] | Internal calls: 3
+     Outgoing deps (2): Other(buildFormat)(16), CoinUtils helpers/sort/error/message(1)
+     Incoming deps (2): ClpModel(6), ClpSimplex(3)
+
+   [Cluster] Other(CoinSet)
+     Modules (1): type::CoinSet
+     Defined MFs: 5 | LOC: 24 | Graph1 SCC layers: [0] | Internal calls: 0
+     Outgoing deps (0): NONE
+     Incoming deps (2): Other(CoinSosSet)(12), CoinMpsIO(4)
+
+   [Cluster] Other(CoinSosSet)
+     Modules (1): type::CoinSosSet
+     Defined MFs: 1 | LOC: 20 | Graph1 SCC layers: [1] | Internal calls: 0
+     Outgoing deps (1): Other(CoinSet)(12)
+     Incoming deps (1): CoinMpsIO(2)
+
+   [Cluster] Other(buildFormat)
+     Modules (1): type::buildFormat
+     Defined MFs: 0 | LOC: 0 | Graph1 SCC layers: [0] | Internal calls: 0
+     Outgoing deps (0): NONE
+     Incoming deps (1): Other(CoinBuild)(16)
