@@ -736,6 +736,7 @@ function primal!(
         end
 
         # Inner primal loop (re-enter directly on any_updates == 2 fallback without refactoring!)
+        prev_outer_iters = m.number_iterations
         m.problem_status = -1
         ret_code = -1
         pcs_size_f = m.cf.lu.len_l + m.cf.lu.len_u
@@ -813,10 +814,16 @@ function primal!(
                 end
                 continue
             elseif pl_exit == CLP_PL_EXIT_SAVE_DJ_CHECK_INF
+                if m.cf.lu.npivots == 0 && seq_in > 0
+                    @inbounds m.status[seq_in] |= CLP_STATUS_FLAGGED_BIT
+                end
                 m.problem_status = -2
                 break
             elseif pl_exit == CLP_PL_EXIT_SAVE_DJ_FLAG_W
                 m.cf.lu.pivot_tol = min(0.995, max(m.cf.lu.pivot_tol * 1.1, 0.1))
+                if m.cf.lu.npivots == 0 && seq_in > 0
+                    @inbounds m.status[seq_in] |= CLP_STATUS_FLAGGED_BIT
+                end
                 m.problem_status = -2
                 break
             elseif pl_exit == CLP_PL_EXIT_UNBOUNDED_RAY
@@ -848,6 +855,9 @@ function primal!(
             end
         end
 
+        if m.number_iterations == prev_outer_iters && m.problem_status == -2 && seq_in > 0
+            @inbounds m.status[seq_in] |= CLP_STATUS_FLAGGED_BIT
+        end
         if m.problem_status == CLP_STATUS_DUAL_INFEAS ||
            m.problem_status == CLP_STATUS_MAX_ITERATIONS ||
            m.number_iterations >= m.max_iterations

@@ -98,7 +98,7 @@ function clp_read_mps(path::AbstractString)
         end
     end
 
-    open(path, "r") do io
+    _parse_io = function (io)
         for raw_line in eachline(io)
             isempty(raw_line) && continue
             c1 = codeunit(raw_line, 1)
@@ -326,6 +326,15 @@ function clp_read_mps(path::AbstractString)
                     col_has_hi[cidx] = true
                 end
             end
+        end
+    end
+    if endswith(lowercase(path), ".gz")
+        open(`gzip -dc $path`, "r") do io
+            _parse_io(io)
+        end
+    else
+        open(path, "r") do io
+            _parse_io(io)
         end
     end
 
