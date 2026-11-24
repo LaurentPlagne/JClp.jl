@@ -26,8 +26,15 @@ end
     idx::AbstractVector{Int32},
     nnz::Int,
 )::Int
-    @inbounds for i in 1:nnz
-        val[Int(idx[i])] = 0.0
+    cap = length(val)
+    if 3 * nnz < cap
+        @inbounds for i in 1:nnz
+            val[Int(idx[i])] = 0.0
+        end
+    else
+        @inbounds for i in 1:cap
+            val[i] = 0.0
+        end
     end
     return 0
 end

@@ -1796,3 +1796,239 @@ function clp_mat_partial_pricing!(
     end
     return (best_seq, n_wanted, saved_dj)
 end
+
+"""
+    clp_mat_transpose_times2!(starts, indices, elements, ncols,
+                              pi1_val, pi1_idx, pi1_nnz,
+                              pi2_val, pi2_idx, pi2_nnz,
+                              spare_val, dj1_val, dj1_idx,
+                              infeas, rc, weights, ref, has_ref, status,
+                              has_scale, row_scale, col_scale,
+                              ref_in, devex, scale_factor, zero_tol, dual_tol) -> Int
+
+Exact 1-based Julia translation of `ClpPackedMatrix::transposeTimes2` (packed `pi1`, unpacked `pi2`,
+no gaps, no `columnCopy_`, `infeas != NULL`, `scaleFactor != 0`). Returns `dj1_nnz` (with `returnCode = 1`).
+"""
+function clp_mat_transpose_times2!(
+    starts::AbstractVector{Int32},
+    indices::AbstractVector{Int32},
+    elements::AbstractVector{Float64},
+    ncols::Int,
+    pi1_val::AbstractVector{Float64},
+    pi1_idx::AbstractVector{Int32},
+    pi1_nnz::Int,
+    pi2_val::AbstractVector{Float64},
+    pi2_idx::AbstractVector{Int32},
+    pi2_nnz::Int,
+    spare_val::AbstractVector{Float64},
+    dj1_val::AbstractVector{Float64},
+    dj1_idx::AbstractVector{Int32},
+    infeas::AbstractVector{Float64},
+    rc::AbstractVector{Float64},
+    weights::AbstractVector{Float64},
+    ref::AbstractVector{UInt32},
+    has_ref::Bool,
+    status::AbstractVector{UInt8},
+    has_scale::Bool,
+    row_scale::AbstractVector{Float64},
+    col_scale::AbstractVector{Float64},
+    ref_in::Float64,
+    devex::Float64,
+    scale_factor::Float64,
+    zero_tol::Float64,
+    dual_tol::Float64,
+)::Int
+    nnz = 0
+    dbl_min = floatmin(Float64)
+    @inbounds begin
+        if !has_scale
+            for i in 1:pi1_nnz
+                spare_val[Int(pi1_idx[i])] = pi1_val[i]
+            end
+            e_col = Int(starts[1])
+            for icol in 1:ncols
+                s_col = e_col
+                e_col = Int(starts[icol + 1])
+                st = status[icol] & CLP_STATUS_MASK
+                if st == CLP_STATUS_BASIC || st == CLP_STATUS_IS_FIXED
+                    continue
+                end
+                val = 0.0
+                modv = 0.0
+                for j in s_col:(e_col - 1)
+                    irow = Int(indices[j])
+                    el = elements[j]
+                    val = fma(-spare_val[irow], el, val)
+                    modv = fma(pi2_val[irow], el, modv)
+                end
+                if abs(val) > zero_tol
+                    w = weights[icol]
+                    piv = val * scale_factor
+                    piv2 = piv * piv
+                    w += fma(piv2, devex, piv * modv)
+                    if w < CLP_STEEP_TRY_NORM
+                        if ref_in < 0.0
+                            w = max(CLP_STEEP_TRY_NORM, CLP_STEEP_ADD_ONE + piv2)
+                        else
+                            w = ref_in * piv2
+                            if has_ref
+                                i0 = icol - 1
+                                if ((ref[(i0 >> 5) + 1] >> (i0 & 31)) & UInt32(1)) != UInt32(0)
+                                    w += 1.0
+                                end
+                            end
+                            w = max(w, CLP_STEEP_TRY_NORM)
+                        end
+                    end
+                    weights[icol] = w
+                    val = rc[icol] - val
+                    rc[icol] = val
+                    if st == CLP_STATUS_AT_LOWER
+                        if val < -dual_tol
+                            v2 = val * val
+                            if infeas[icol] != 0.0
+                                infeas[icol] = v2
+                            else
+                                nnz += 1
+                                dj1_val[nnz] = v2
+                                dj1_idx[nnz] = Int32(icol)
+                            end
+                        elseif infeas[icol] != 0.0
+                            infeas[icol] = dbl_min
+                        end
+                    elseif st == CLP_STATUS_AT_UPPER
+                        if val > dual_tol
+                            v2 = val * val
+                            if infeas[icol] != 0.0
+                                infeas[icol] = v2
+                            else
+                                nnz += 1
+                                dj1_val[nnz] = v2
+                                dj1_idx[nnz] = Int32(icol)
+                            end
+                        else
+                            nnz += 1
+                            dj1_val[nnz] = 0.0
+                            dj1_idx[nnz] = Int32(icol)
+                        end
+                    elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+                        if abs(val) > CLP_FREE_ACCEPT * dual_tol
+                            vb = val * CLP_FREE_BIAS
+                            v2 = vb * vb
+                            if infeas[icol] != 0.0
+                                infeas[icol] = v2
+                            else
+                                nnz += 1
+                                dj1_val[nnz] = v2
+                                dj1_idx[nnz] = Int32(icol)
+                            end
+                        else
+                            nnz += 1
+                            dj1_val[nnz] = 0.0
+                            dj1_idx[nnz] = Int32(icol)
+                        end
+                    end
+                end
+            end
+        else
+            for i in 1:pi1_nnz
+                ir = Int(pi1_idx[i])
+                spare_val[ir] = pi1_val[i] * row_scale[ir]
+            end
+            for i in 1:pi2_nnz
+                ir = Int(pi2_idx[i])
+                pi2_val[ir] *= row_scale[ir]
+            end
+            e_col = Int(starts[1])
+            for icol in 1:ncols
+                s_col = e_col
+                e_col = Int(starts[icol + 1])
+                st = status[icol] & CLP_STATUS_MASK
+                if st == CLP_STATUS_BASIC || st == CLP_STATUS_IS_FIXED
+                    continue
+                end
+                sc = col_scale[icol]
+                val = 0.0
+                modv = 0.0
+                for j in s_col:(e_col - 1)
+                    irow = Int(indices[j])
+                    el = elements[j]
+                    val = fma(-spare_val[irow], el, val)
+                    modv = fma(pi2_val[irow], el, modv)
+                end
+                val *= sc
+                if abs(val) > zero_tol
+                    modv *= sc
+                    w = weights[icol]
+                    piv = val * scale_factor
+                    piv2 = piv * piv
+                    w += fma(piv2, devex, piv * modv)
+                    if w < CLP_STEEP_TRY_NORM
+                        if ref_in < 0.0
+                            w = max(CLP_STEEP_TRY_NORM, CLP_STEEP_ADD_ONE + piv2)
+                        else
+                            w = ref_in * piv2
+                            if has_ref
+                                i0 = icol - 1
+                                if ((ref[(i0 >> 5) + 1] >> (i0 & 31)) & UInt32(1)) != UInt32(0)
+                                    w += 1.0
+                                end
+                            end
+                            w = max(w, CLP_STEEP_TRY_NORM)
+                        end
+                    end
+                    weights[icol] = w
+                    val = rc[icol] - val
+                    rc[icol] = val
+                    if st == CLP_STATUS_AT_LOWER
+                        if val < -dual_tol
+                            v2 = val * val
+                            if infeas[icol] != 0.0
+                                infeas[icol] = v2
+                            else
+                                nnz += 1
+                                dj1_val[nnz] = v2
+                                dj1_idx[nnz] = Int32(icol)
+                            end
+                        elseif infeas[icol] != 0.0
+                            infeas[icol] = dbl_min
+                        end
+                    elseif st == CLP_STATUS_AT_UPPER
+                        if val > dual_tol
+                            v2 = val * val
+                            if infeas[icol] != 0.0
+                                infeas[icol] = v2
+                            else
+                                nnz += 1
+                                dj1_val[nnz] = v2
+                                dj1_idx[nnz] = Int32(icol)
+                            end
+                        elseif infeas[icol] != 0.0
+                            infeas[icol] = dbl_min
+                        end
+                    elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+                        if abs(val) > CLP_FREE_ACCEPT * dual_tol
+                            vb = val * CLP_FREE_BIAS
+                            v2 = vb * vb
+                            if infeas[icol] != 0.0
+                                infeas[icol] = v2
+                            else
+                                nnz += 1
+                                dj1_val[nnz] = v2
+                                dj1_idx[nnz] = Int32(icol)
+                            end
+                        else
+                            nnz += 1
+                            dj1_val[nnz] = 0.0
+                            dj1_idx[nnz] = Int32(icol)
+                        end
+                    end
+                end
+            end
+        end
+        for i in 1:pi1_nnz
+            spare_val[Int(pi1_idx[i])] = 0.0
+        end
+    end
+    return nnz
+end
