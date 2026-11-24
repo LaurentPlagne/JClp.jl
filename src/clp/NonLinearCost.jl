@@ -372,3 +372,94 @@ end
         return (delta_cost, rhs)
     end
 end
+
+"""
+    clp_nlc_set_one_outgoing_m2!(nlc_status, bound, cost2, lower, upper, cost,
+                                 iseq, val, primal_tol, infeas_weight, n_infeas)
+        -> (direction, new_val, delta_change_cost, new_n_infeas)
+
+Exact 1-based translation of `ClpNonLinearCost::setOneOutgoing(iSequence, value)` (`CLP_METHOD2`).
+"""
+function clp_nlc_set_one_outgoing_m2!(
+    nlc_status::AbstractVector{UInt8},
+    bound::AbstractVector{Float64},
+    cost2::AbstractVector{Float64},
+    lower::AbstractVector{Float64},
+    upper::AbstractVector{Float64},
+    cost::AbstractVector{Float64},
+    iseq::Int,
+    val::Float64,
+    primal_tol::Float64,
+    infeas_weight::Float64,
+    n_infeas::Int,
+)::Tuple{Int,Float64,Float64,Int}
+    dbl_max = floatmax(Float64)
+    diff = 0.0
+    @inbounds begin
+        ist = nlc_status[iseq]
+        lo = lower[iseq]
+        hi = upper[iseq]
+        c = cost2[iseq]
+        if val <= lo + 1.001 * primal_tol
+            direction = 1
+        elseif val >= hi - 1.001 * primal_tol
+            direction = -1
+        else
+            direction = 0
+        end
+        iwhere = _nlc_orig_status(ist)
+        if iwhere == CLP_NLC_BELOW_LOWER
+            lo = hi
+            hi = bound[iseq]
+            n_infeas -= 1
+        elseif iwhere == CLP_NLC_ABOVE_UPPER
+            hi = lo
+            lo = bound[iseq]
+            n_infeas -= 1
+        end
+        if lo == hi
+            val = lo
+        end
+        new_where = CLP_NLC_FEASIBLE
+        if val - hi <= primal_tol
+            if val - lo < -primal_tol
+                new_where = CLP_NLC_BELOW_LOWER
+                c -= infeas_weight
+                n_infeas += 1
+            end
+        else
+            new_where = CLP_NLC_ABOVE_UPPER
+            c += infeas_weight
+            n_infeas += 1
+        end
+        if iwhere != new_where
+            diff = cost[iseq] - c
+            nlc_status[iseq] = _nlc_set_orig_status(ist, new_where)
+            if new_where == CLP_NLC_BELOW_LOWER
+                bound[iseq] = hi
+                upper[iseq] = lo
+                lower[iseq] = -dbl_max
+            elseif new_where == CLP_NLC_ABOVE_UPPER
+                bound[iseq] = lo
+                lower[iseq] = hi
+                upper[iseq] = dbl_max
+            else
+                lower[iseq] = lo
+                upper[iseq] = hi
+            end
+            cost[iseq] = c
+        end
+        if abs(val - lo) <= primal_tol * 1.001
+            val = min(val, lo + primal_tol)
+        elseif abs(val - hi) <= primal_tol * 1.001
+            val = max(val, hi - primal_tol)
+        else
+            if val - lo <= hi - val
+                val = lo + primal_tol
+            else
+                val = hi - primal_tol
+            end
+        end
+    end
+    return (direction, val, val * diff, n_infeas)
+end

@@ -13,6 +13,18 @@ const CLP_STEEP_ADD_ONE     = 1.0
     @inbounds return ((ref[(i0 >> 5) + 1] >> (i0 & 31)) & UInt32(1)) != UInt32(0)
 end
 
+@inline function _pcs_set_ref!(ref::AbstractVector{UInt32}, iseq::Int, val::Bool)::Nothing
+    i0 = iseq - 1
+    w = (i0 >> 5) + 1
+    bit = UInt32(1) << (i0 & 31)
+    @inbounds if val
+        ref[w] |= bit
+    else
+        ref[w] &= ~bit
+    end
+    return nothing
+end
+
 @inline function _infeas_zero!(infeas::AbstractVector{Float64}, idx::Int)::Nothing
     @inbounds if infeas[idx] != 0.0
         infeas[idx] = floatmin(Float64)
@@ -628,4 +640,123 @@ function clp_pcs_looks_optimal_simple(
         end
     end
     return true
+end
+
+"""
+    clp_pcs_update_weights_packed!(r1_val, r1_idx, r1_nnz, pivot_var,
+                                   weights, ref, has_ref, alt_val, alt_idx, alt_nnz,
+                                   mode, number_switched, pivot_row, seq_in, seq_out,
+                                   alpha, devex)
+        -> (devex, alt_nnz, pivot_seq, need_init_weights)
+
+Exact 1-based translation of `ClpPrimalColumnSteepest::updateWeights(input)` for packed `input`
+and `pivot_row > 0`.
+"""
+function clp_pcs_update_weights_packed!(
+    r1_val::AbstractVector{Float64},
+    r1_idx::AbstractVector{Int32},
+    r1_nnz::Int,
+    pivot_var::AbstractVector{Int32},
+    status::AbstractVector{UInt8},
+    ntotal::Int,
+    weights::AbstractVector{Float64},
+    ref::AbstractVector{UInt32},
+    has_ref::Bool,
+    alt_val::AbstractVector{Float64},
+    alt_idx::AbstractVector{Int32},
+    alt_nnz::Int,
+    mode::Int,
+    number_switched::Int,
+    pivot_row::Int,
+    pcs_pivot_seq::Int,
+    seq_in::Int,
+    seq_out::Int,
+    alpha::Float64,
+    devex::Float64,
+)::Tuple{Float64,Int,Int,Bool}
+    if mode == 4 && number_switched != 0
+        switch_type = 3
+    elseif mode == 4 || mode == 5
+        return (devex, alt_nnz, pcs_pivot_seq, false)
+    else
+        switch_type = mode
+    end
+
+    pivot_seq = pivot_row
+    devex = 0.0
+    @inbounds begin
+        if switch_type == 1
+            for i in 1:r1_nnz
+                irow = Int(r1_idx[i])
+                v = r1_val[i]
+                devex = _pcp_fmadd(v, v, devex)
+                alt_val[irow] = -2.0 * v
+                alt_idx[i] = Int32(irow)
+            end
+            alt_val[pivot_row] = -2.0 * max(devex, 0.0)
+            devex += CLP_STEEP_ADD_ONE
+            weights[seq_out] = 1.0 + CLP_STEEP_ADD_ONE
+            alt_nnz = r1_nnz
+        else
+            new_num = 0
+            if (mode != 4 && mode != 5) || number_switched > 1
+                for i in 1:r1_nnz
+                    irow = Int(r1_idx[i])
+                    ipiv = Int(pivot_var[irow])
+                    if has_ref && _pcs_ref(ref, ipiv)
+                        v = r1_val[i]
+                        devex = _pcp_fmadd(v, v, devex)
+                        alt_val[irow] = -2.0 * v
+                        new_num += 1
+                        alt_idx[new_num] = Int32(irow)
+                    end
+                end
+                if alt_val[pivot_row] == 0.0 && devex > 0.0
+                    new_num += 1
+                    alt_idx[new_num] = Int32(pivot_row)
+                end
+                alt_val[pivot_row] = -2.0 * max(devex, 0.0)
+            else
+                for i in 1:r1_nnz
+                    irow = Int(r1_idx[i])
+                    ipiv = Int(pivot_var[irow])
+                    if has_ref && _pcs_ref(ref, ipiv)
+                        v = r1_val[i]
+                        devex = _pcp_fmadd(v, v, devex)
+                    end
+                end
+            end
+            if has_ref && _pcs_ref(ref, seq_in)
+                devex += 1.0
+            end
+            weights[seq_out] = (has_ref && _pcs_ref(ref, seq_out)) ? 2.0 : 1.0
+            alt_nnz = new_num
+        end
+
+        if devex < 1.001e-30
+            devex = 1.0e-30
+        end
+        old_devex = weights[seq_in]
+        check = max(devex, old_devex) + 0.1
+        weights[seq_in] = devex
+        test_val = (mode == 4 && number_switched == 1) ? 0.5 : 0.1
+        need_init = false
+        if abs(devex - old_devex) > test_val * check
+            test_val2 = mode == 1 ? 1.01e1 : ((mode == 4 && number_switched == 1) ? 0.9 : 0.99)
+            if abs(devex - old_devex) > test_val2 * check
+                if mode != 1 && has_ref
+                    for iseq in 1:ntotal
+                        weights[iseq] = 1.0
+                        _pcs_set_ref!(ref, iseq, (status[iseq] & CLP_STATUS_MASK) != CLP_STATUS_BASIC)
+                    end
+                else
+                    need_init = true
+                end
+                devex = 1.0
+            end
+        end
+        a_use = abs(alpha) > 1.0e15 ? 1.0e15 : alpha
+        weights[seq_out] = devex / (a_use * a_use)
+    end
+    return (devex, alt_nnz, pivot_seq, need_init)
 end
