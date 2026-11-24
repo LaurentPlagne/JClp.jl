@@ -6243,3 +6243,271 @@ Base.@ccallable function jclp_guts_of_solution_check_accuracy(
     unsafe_store!(io_first_free_0based, Cint(ff_out > 0 ? (ff_out - 1) : -1))
     return Cint(ret)
 end
+
+# ==============================================================================
+# Phase B — B12a: ClpSimplexDual::whileIterating pure-Julia inner loop
+# ==============================================================================
+
+const _DL_MARKED_BUF = UInt8[]
+const _DL_WORK_BUF = Float64[]
+
+Base.@ccallable function jclp_dual_while_iterating(
+    cf_handle::Cint,
+    mat_starts::Ptr{Cint},
+    mat_lengths::Ptr{Cint},
+    mat_indices::Ptr{Cint},
+    mat_elements::Ptr{Cdouble},
+    tt_starts::Ptr{Cint},
+    tt_indices::Ptr{Cint},
+    tt_elements::Ptr{Cdouble},
+    row_scale::Ptr{Cdouble},
+    col_scale::Ptr{Cdouble},
+    inv_col_scale::Ptr{Cdouble},
+    tt_has_scale_flag::Cint,
+    rc_starts::Ptr{Cint},
+    rc_cols::Ptr{Cint},
+    rc_elements::Ptr{Cdouble},
+    pivot_var::Ptr{Cint},
+    solution::Ptr{Cdouble},
+    lower::Ptr{Cdouble},
+    upper::Ptr{Cdouble},
+    cost::Ptr{Cdouble},
+    dj::Ptr{Cdouble},
+    status::Ptr{Cuchar},
+    col_lower_orig::Ptr{Cdouble},
+    col_upper_orig::Ptr{Cdouble},
+    row_lower_orig::Ptr{Cdouble},
+    row_upper_orig::Ptr{Cdouble},
+    drs_weights::Ptr{Cdouble},
+    drs_infeas_val::Ptr{Cdouble},
+    drs_infeas_idx::Ptr{Cint},
+    drs_alt_val::Ptr{Cdouble},
+    drs_alt_idx::Ptr{Cint},
+    prog_in::Ptr{Cint},
+    prog_out::Ptr{Cint},
+    prog_way::Ptr{Cchar},
+    r0_val::Ptr{Cdouble},
+    r0_idx::Ptr{Cint},
+    r1_val::Ptr{Cdouble},
+    r1_idx::Ptr{Cint},
+    r2_val::Ptr{Cdouble},
+    r2_idx::Ptr{Cint},
+    r3_val::Ptr{Cdouble},
+    r3_idx::Ptr{Cint},
+    c0_val::Ptr{Cdouble},
+    c0_idx::Ptr{Cint},
+    c1_val::Ptr{Cdouble},
+    c1_idx::Ptr{Cint},
+    cfg_ints::Ptr{Cint},
+    cfg_dbls::Ptr{Cdouble},
+    io_ints::Ptr{Cint},
+    io_dbls::Ptr{Cdouble},
+)::Cint
+    cf = _cf_get(cf_handle)
+    ci = PtrView(cfg_ints, 17)
+    cd = PtrView(cfg_dbls, 11)
+    ii = PtrView(io_ints, 25)
+    id = PtrView(io_dbls, 16)
+
+    @inbounds begin
+        nrows = Int(ci[1])
+        ncols = Int(ci[2])
+        ntotal = nrows + ncols
+        mat_nz = Int(ci[3])
+        tt_nz = Int(ci[4])
+        rc_nz = Int(ci[5])
+        drs_mode = Int(ci[6])
+        max_iter = Int(ci[7])
+        spec_opt = Int(ci[8])
+        obj_type = Int(ci[9])
+        nthreads = Int(ci[10])
+        r0_cap = Int(ci[11])
+        r1_cap = Int(ci[12])
+        r2_cap = Int(ci[13])
+        r3_cap = Int(ci[14])
+        c0_cap = Int(ci[15])
+        c1_cap = Int(ci[16])
+        alt_cap = Int(ci[17])
+
+        primal_tol = cd[1]
+        dual_tol = cd[2]
+        zero_tol = cd[3]
+        dual_bound = cd[4]
+        large_val = cd[5]
+        obj_scale = cd[7]
+        rhs_scale = cd[8]
+        lp_err = cd[9]
+        ld_err = cd[10]
+        save_sum_d = cd[11]
+
+        prob_st = Int(ii[1])
+        ret_code = Int(ii[2])
+        n_iters = Int(ii[3])
+        chg_made = Int(ii[4])
+        prog_flg = Int(ii[5])
+        mso = Int(ii[6])
+        ff0 = Int(ii[7])
+        ff1 = ff0 >= 0 ? (ff0 + 1) : 0
+        last_bad = Int(ii[8])
+        ffac = Int(ii[9])
+        pbad = Int(ii[10])
+        nfake = Int(ii[11])
+        nchg = Int(ii[12])
+        npinf = Int(ii[13])
+        infeas_nnz = Int(ii[14])
+        alt_nnz = Int(ii[15])
+        piv_r0 = Int(ii[18])
+        piv_r1 = piv_r0 >= 0 ? (piv_r0 + 1) : 0
+        si0 = Int(ii[19])
+        si1 = si0 >= 0 ? (si0 + 1) : 0
+        so0 = Int(ii[20])
+        so1 = so0 >= 0 ? (so0 + 1) : 0
+        dir_in = Int(ii[21])
+        dir_out = Int(ii[22])
+        sp_i0 = Int(ii[23])
+        sp_i1 = Int(ii[24])
+        rng_seed = reinterpret(UInt32, ii[25])
+
+        val_in = id[1]
+        lo_in = id[2]
+        hi_in = id[3]
+        dual_in = id[4]
+        val_out = id[5]
+        lo_out = id[6]
+        hi_out = id[7]
+        dual_out = id[8]
+        theta = id[9]
+        alpha = id[10]
+        alpha_acc = id[11]
+        obj_val = id[12]
+        sp_d0 = id[13]
+        sp_d2 = id[14]
+        sp_d3 = id[15]
+        acc_piv_m = id[16]
+    end
+
+    if length(_DL_MARKED_BUF) < ncols
+        old_len = length(_DL_MARKED_BUF)
+        resize!(_DL_MARKED_BUF, ncols)
+        @inbounds for i in (old_len + 1):ncols
+            _DL_MARKED_BUF[i] = UInt8(0)
+        end
+    end
+    if length(_DL_WORK_BUF) < ncols
+        old_len = length(_DL_WORK_BUF)
+        resize!(_DL_WORK_BUF, ncols)
+        @inbounds for i in (old_len + 1):ncols
+            _DL_WORK_BUF[i] = 0.0
+        end
+    end
+
+    has_scale = (row_scale != C_NULL)
+    tt_has_scale = (tt_has_scale_flag != Cint(0))
+    has_row_copy = (rc_starts != C_NULL)
+
+    rs_v = has_scale ? PtrView(row_scale, nrows) : PtrView(Ptr{Cdouble}(C_NULL), 0)
+    cs_v = has_scale ? PtrView(col_scale, ncols) : PtrView(Ptr{Cdouble}(C_NULL), 0)
+    ics_v = has_scale ? PtrView(inv_col_scale, ncols) : PtrView(Ptr{Cdouble}(C_NULL), 0)
+    rc_s_v = has_row_copy ? ShiftedPtrView(rc_starts, nrows + 1) : ShiftedPtrView(Ptr{Cint}(C_NULL), 0)
+    rc_c_v = has_row_copy ? ShiftedPtrView(rc_cols, rc_nz) : ShiftedPtrView(Ptr{Cint}(C_NULL), 0)
+    rc_e_v = has_row_copy ? PtrView(rc_elements, rc_nz) : PtrView(Ptr{Cdouble}(C_NULL), 0)
+
+    exit_code, prob_st, ret_code, n_iters, chg_made, prog_flg, mso, ff1, last_bad,
+    ffac, pbad, nfake, nchg, npinf, infeas_nnz, alt_nnz, r0_nnz, c0_nnz,
+    piv_r1, si1, so1, dir_in, dir_out,
+    val_in, lo_in, hi_in, dual_in, val_out, lo_out, hi_out, dual_out,
+    theta, alpha, alpha_acc, obj_val, sp_i0, sp_i1, sp_d0, acc_piv_m, best_possible, rng_seed =
+        clp_dual_while_iterating!(
+            cf,
+            ShiftedPtrView(mat_starts, ncols + 1),
+            PtrView(mat_lengths, ncols),
+            ShiftedPtrView(mat_indices, mat_nz),
+            PtrView(mat_elements, mat_nz),
+            ShiftedPtrView(tt_starts, ncols + 1),
+            ShiftedPtrView(tt_indices, tt_nz),
+            PtrView(tt_elements, tt_nz),
+            has_scale, tt_has_scale, rs_v, cs_v, ics_v,
+            has_row_copy, rc_s_v, rc_c_v, rc_e_v,
+            ShiftedPtrView(pivot_var, nrows),
+            PtrView(solution, ntotal),
+            PtrView(lower, ntotal),
+            PtrView(upper, ntotal),
+            PtrView(cost, ntotal),
+            PtrView(dj, ntotal),
+            PtrView(status, ntotal),
+            PtrView(col_lower_orig, ncols),
+            PtrView(col_upper_orig, ncols),
+            PtrView(row_lower_orig, nrows),
+            PtrView(row_upper_orig, nrows),
+            PtrView(drs_weights, nrows),
+            PtrView(drs_infeas_val, nrows),
+            ShiftedPtrView(drs_infeas_idx, nrows),
+            infeas_nnz,
+            PtrView(drs_alt_val, alt_cap),
+            ShiftedPtrView(drs_alt_idx, alt_cap),
+            alt_nnz,
+            drs_mode,
+            PtrView(prog_in, CLP_CYCLE),
+            PtrView(prog_out, CLP_CYCLE),
+            PtrView(prog_way, CLP_CYCLE),
+            PtrView(r0_val, r0_cap), ShiftedPtrView(r0_idx, r0_cap),
+            PtrView(r1_val, r1_cap), ShiftedPtrView(r1_idx, r1_cap),
+            PtrView(r2_val, r2_cap), ShiftedPtrView(r2_idx, r2_cap),
+            PtrView(r3_val, r3_cap), ShiftedPtrView(r3_idx, r3_cap),
+            PtrView(c0_val, c0_cap), ShiftedPtrView(c0_idx, c0_cap),
+            PtrView(c1_val, c1_cap), ShiftedPtrView(c1_idx, c1_cap),
+            _DL_MARKED_BUF, _DL_WORK_BUF,
+            nrows, ncols, primal_tol, dual_tol, zero_tol, dual_bound, large_val,
+            acc_piv_m, obj_scale, rhs_scale, lp_err, ld_err, save_sum_d,
+            max_iter, spec_opt, obj_type, nthreads,
+            prob_st, ret_code, n_iters, chg_made, prog_flg, mso, ff1, last_bad,
+            ffac, pbad, nfake, nchg, npinf, piv_r1, si1, so1, dir_in, dir_out,
+            val_in, lo_in, hi_in, dual_in, val_out, lo_out, hi_out, dual_out,
+            theta, alpha, alpha_acc, obj_val, sp_i0, sp_i1, sp_d0, sp_d2, sp_d3, rng_seed,
+        )
+
+    @inbounds begin
+        ii[1] = Cint(prob_st)
+        ii[2] = Cint(ret_code)
+        ii[3] = Cint(n_iters)
+        ii[4] = Cint(chg_made)
+        ii[5] = Cint(prog_flg)
+        ii[6] = Cint(mso)
+        ii[7] = Cint(ff1 > 0 ? (ff1 - 1) : -1)
+        ii[8] = Cint(last_bad)
+        ii[9] = Cint(ffac)
+        ii[10] = Cint(pbad)
+        ii[11] = Cint(nfake)
+        ii[12] = Cint(nchg)
+        ii[13] = Cint(npinf)
+        ii[14] = Cint(infeas_nnz)
+        ii[15] = Cint(alt_nnz)
+        ii[16] = Cint(r0_nnz)
+        ii[17] = Cint(c0_nnz)
+        ii[18] = Cint(piv_r1 > 0 ? (piv_r1 - 1) : -1)
+        ii[19] = Cint(si1 > 0 ? (si1 - 1) : -1)
+        ii[20] = Cint(so1 > 0 ? (so1 - 1) : -1)
+        ii[21] = Cint(dir_in)
+        ii[22] = Cint(dir_out)
+        ii[23] = Cint(sp_i0)
+        ii[24] = Cint(sp_i1)
+        ii[25] = reinterpret(Cint, rng_seed)
+
+        id[1] = val_in
+        id[2] = lo_in
+        id[3] = hi_in
+        id[4] = dual_in
+        id[5] = val_out
+        id[6] = lo_out
+        id[7] = hi_out
+        id[8] = dual_out
+        id[9] = theta
+        id[10] = alpha
+        id[11] = alpha_acc
+        id[12] = obj_val
+        id[13] = sp_d0
+        id[14] = best_possible
+        id[16] = acc_piv_m
+    end
+    return Cint(exit_code)
+end
