@@ -428,13 +428,25 @@ function dual!(
             m.problem_status = CLP_STATUS_MAX_ITERATIONS
             break
         elseif dl_exit == CLP_DL_EXIT_SEQ_IN_NEG
-            # Dual unbounded -> primal infeasible (confirm on fresh factorization with unflagged vars)
+            # Dual unbounded -> primal infeasible (confirm after unflagging & lowering acceptable_pivot)
             n_unf = _sm_clear_flags!(m.status)
             if m.cf.lu.npivots == 0 && n_unf == 0
-                infeas_confirm += 1
-                if infeas_confirm >= 2
-                    m.problem_status = CLP_STATUS_PRIMAL_INFEAS
-                    break
+                if m.acceptable_pivot > 1.0e-12
+                    m.acceptable_pivot = max(1.0e-12, m.acceptable_pivot * 0.01)
+                    m.cf.lu.pivot_tol = min(0.99, max(m.cf.lu.pivot_tol * 2.0, 0.5))
+                else
+                    infeas_confirm += 1
+                    if infeas_confirm >= 2
+                        if number_fake > 0
+                            # Fake bounds may have caused primal infeasibility -> verify with primal!
+                            m.problem_status = -1
+                            m.num_primal_infeas = 0
+                            m.num_dual_infeas = 1
+                            break
+                        end
+                        m.problem_status = CLP_STATUS_PRIMAL_INFEAS
+                        break
+                    end
                 end
             else
                 infeas_confirm = 0
@@ -453,8 +465,21 @@ function dual!(
         end
     end
 
-    # If dual exited with primal-feasible but dual-infeasible basis, finish with primal!
+    # If dual exited with primal-feasible (or fake-bounded) basis needing primal cleanup,
+    # reset any nonbasic variable sitting on an infinite bound before delete_rim!/primal!
     need_primal_cleanup = (m.problem_status == -1 && m.num_primal_infeas == 0 && m.num_dual_infeas > 0)
+    if need_primal_cleanup
+        @inbounds for seq in 1:ntotal
+            st = _sb_get_status(m.status[seq])
+            lo_orig = seq <= ncols ? m.col_lower[seq] : m.row_lower[seq - ncols]
+            hi_orig = seq <= ncols ? m.col_upper[seq] : m.row_upper[seq - ncols]
+            if st == CLP_STATUS_AT_UPPER && hi_orig >= 1.0e20
+                m.status[seq] = _sb_set_status(m.status[seq], lo_orig > -1.0e20 ? CLP_STATUS_AT_LOWER : CLP_STATUS_IS_FREE)
+            elseif st == CLP_STATUS_AT_LOWER && lo_orig <= -1.0e20
+                m.status[seq] = _sb_set_status(m.status[seq], hi_orig < 1.0e20 ? CLP_STATUS_AT_UPPER : CLP_STATUS_IS_FREE)
+            end
+        end
+    end
     delete_rim!(m)
     if need_primal_cleanup
         prev_iters = m.number_iterations
