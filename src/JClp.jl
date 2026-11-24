@@ -36,6 +36,7 @@ include("clp/PrimalLoop.jl")
 include("clp/MpsReader.jl")
 include("clp/SimplexModel.jl")
 include("clp/SimplexSolve.jl")
+include("clp/Presolve.jl")
 
 # C ABI Bridge (@ccallable exports for JuliaC --trim=safe)
 include("bridge/PtrView.jl")

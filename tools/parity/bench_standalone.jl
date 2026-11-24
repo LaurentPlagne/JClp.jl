@@ -94,10 +94,17 @@ function run_standalone_bench(mode::String = "dual"; all_models::Bool = false, m
     # Warmup JIT on afiro
     let m = JClp.ClpSimplexModel()
         JClp.read_mps!(m, models[1])
-        mode == "dual" ? JClp.dual!(m) : JClp.primal!(m)
+        if mode == "initial"
+            JClp.initial_solve!(m)
+        elseif mode == "dual"
+            JClp.dual!(m)
+        else
+            JClp.primal!(m)
+        end
     end
 
-    println("\n=== Standalone Pure-Julia JClp.jl vs Clean C++ Clp (mode=$(mode), presolve=off, n=$(length(models))) ===")
+    ps_label = mode == "initial" ? "presolve=on" : "presolve=off"
+    println("\n=== Standalone Pure-Julia JClp.jl vs Clean C++ Clp (mode=$(mode), $(ps_label), n=$(length(models))) ===")
     @printf("%-16s | %-7s | %6s %6s | %8s %8s %6s | %8s | %s\n",
             "Model", "Status", "ItCpp", "ItJClp", "Cpp(ms)", "JClp(ms)", "Ratio", "ms/itR", "ObjCheck")
     println("-"^97)
@@ -117,8 +124,13 @@ function run_standalone_bench(mode::String = "dual"; all_models::Bool = false, m
         m = JClp.ClpSimplexModel()
         JClp.read_mps!(m, p)
         t0 = time_ns()
-        st = mode == "dual" ? JClp.dual!(m; max_iterations=max_iterations) :
-                              JClp.primal!(m; max_iterations=max_iterations)
+        st = if mode == "initial"
+            JClp.initial_solve!(m; max_iterations=max_iterations)
+        elseif mode == "dual"
+            JClp.dual!(m; max_iterations=max_iterations)
+        else
+            JClp.primal!(m; max_iterations=max_iterations)
+        end
         j_ms = (time_ns() - t0) / 1e6
 
         st_str = st == 0 ? "OPTIMAL" : (st == 1 ? "PRIMAL_INFEASIBLE" : (st == 2 ? "DUAL_INFEASIBLE" : (st == 3 ? "MAXIT" : "ERR($st)")))
@@ -163,11 +175,15 @@ if abspath(PROGRAM_FILE) == @__FILE__
                 mode_arg = split(a, "=", limit=2)[2]
             end
         end
-        if mode_arg == "dual" || mode_arg == "both"
-            run_standalone_bench("dual"; all_models=all_flag)
-        end
-        if mode_arg == "primal" || mode_arg == "both"
-            run_standalone_bench("primal"; all_models=all_flag)
+        if mode_arg == "initial"
+            run_standalone_bench("initial"; all_models=all_flag)
+        else
+            if mode_arg == "dual" || mode_arg == "both"
+                run_standalone_bench("dual"; all_models=all_flag)
+            end
+            if mode_arg == "primal" || mode_arg == "both"
+                run_standalone_bench("primal"; all_models=all_flag)
+            end
         end
     end
 end
