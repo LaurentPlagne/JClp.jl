@@ -251,10 +251,10 @@ function load_problem!(
     m.nlc_change_cost = 0.0
     m.nlc_avg_theta = 1.0
 
-    # Factorization & workspaces
+    # Factorization & workspaces (rowArray capacity >= nrows + max_pivots for Forrest-Tomlin)
     m.cf = ClpFactorization()
-    rcap = nrows + 2
-    ccap = ncols + 2
+    rcap = nrows + max(m.cf.lu.max_pivots, 500) + 16
+    ccap = ncols + 16
     m.r0_val = zeros(Float64, rcap); m.r0_idx = zeros(Int32, rcap)
     m.r1_val = zeros(Float64, rcap); m.r1_idx = zeros(Int32, rcap)
     m.r2_val = zeros(Float64, rcap); m.r2_idx = zeros(Int32, rcap)

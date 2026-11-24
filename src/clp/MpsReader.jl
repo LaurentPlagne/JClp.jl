@@ -219,7 +219,7 @@ function clp_read_mps(path::AbstractString)
                     val = _mps_parse_float(toks[k + 1])
                     ridx = get(row_map, rname, -1)
                     if ridx == 0
-                        obj_offset = -val
+                        obj_offset = val
                     elseif ridx > 0
                         rhs_vals[ridx] = val
                     end

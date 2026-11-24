@@ -30,4 +30,5 @@ using Test
     include("test_b12a_dual_loop.jl")
     include("test_b12b_primal_loop.jl")
     include("test_b12c1_simplex_model.jl")
+    include("test_b12c2_simplex_solve.jl")
 end
