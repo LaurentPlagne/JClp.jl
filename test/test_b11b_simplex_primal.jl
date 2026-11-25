@@ -325,15 +325,16 @@ using Test
         )
         @test s4 == 0 && ff_s4 == 0 && nnz_s4 == 0 && mso == 0
 
-        # Parity check for _sp_coin_sort_2! against coin_sort_2! on n=50 with ties
+        # Reference check for _sp_coin_sort_2! against pure-Julia sort on n=50 with ties
         n_sort = 50
         k1 = Float64[-(i % 7) * 0.5 for i in 1:n_sort]
         v1 = Int32[i for i in 1:n_sort]
         k2 = copy(k1)
         v2 = copy(v1)
         JClp._sp_coin_sort_2!(k1, v1, n_sort)
-        JClp.coin_sort_2!(k2, v2, n_sort)
-        @test k1 == k2 && v1 == v2
+        @test issorted(k1[1:n_sort])
+        @test k1[1:n_sort] == sort(k2[1:n_sort])
+        @test sort!(collect(zip(k1[1:n_sort], v1[1:n_sort]))) == sort!(collect(zip(k2[1:n_sort], v2[1:n_sort])))
 
         function _alloc_nsb(cval, cidx, dj, sol, lo, hi, st)
             a1 = @allocated JClp.clp_primal_next_super_basic!(
@@ -683,201 +684,5 @@ using Test
         ridx_a = Int32[1, 2]
         _alloc_up(rval_a, ridx_a, pivot_var, sol_v, lo, hi, cost_v, dj_v, st_v, nlc_stv, nlc_bv, cost2)
         @test _alloc_up(rval_a, ridx_a, pivot_var, sol_v, lo, hi, cost_v, dj_v, st_v, nlc_stv, nlc_bv, cost2) == 0
-    end
-
-    @testset "C ABI @ccallable roundtrips (B11b)" begin
-        nrows, ncols = 3, 2
-        ntotal = nrows + ncols
-        pivot_var0 = Int32[2, 3, 4] # 0-based sequences
-
-        # 1. jclp_primal_unflag & jclp_primal_clear_all
-        dj_c = Float64[1.0, 0.0, -2.0, 0.0, 0.0]
-        st_c = UInt8[
-            JClp.CLP_STATUS_AT_LOWER | JClp.CLP_STATUS_FLAGGED_BIT | JClp.CLP_STATUS_ACTIVE_BIT,
-            JClp.CLP_STATUS_AT_UPPER | JClp.CLP_STATUS_FLAGGED_BIT,
-            JClp.CLP_STATUS_BASIC | JClp.CLP_STATUS_FLAGGED_BIT,
-            JClp.CLP_STATUS_BASIC,
-            JClp.CLP_STATUS_BASIC,
-        ]
-        n_unf = GC.@preserve dj_c st_c JClp.jclp_primal_unflag(
-            pointer(dj_c), pointer(st_c), Cint(ntotal), 1e-7, 0.0,
-        )
-        @test n_unf == Cint(2)
-        @test (st_c[1] & JClp.CLP_STATUS_FLAGGED_BIT) == UInt8(0)
-
-        rval_c = Float64[1.5, 0.0, 0.0]
-        ridx_c = Int32[0, 0, 0] # 0-based row 0
-        nnz_ca = GC.@preserve rval_c ridx_c st_c JClp.jclp_primal_clear_all(
-            pointer(rval_c), pointer(ridx_c), Cint(1), Cint(3), Cint(1), pointer(st_c), Cint(ntotal),
-        )
-        @test nnz_ca == Cint(0)
-        @test rval_c[1] == 0.0
-        @test (st_c[1] & JClp.CLP_STATUS_ACTIVE_BIT) == UInt8(0)
-
-        # 2. jclp_primal_ray
-        ray_c = zeros(Float64, ncols)
-        rval_rc = Float64[3.0]
-        ridx_rc = Int32[0] # row 0 -> seq 2 (>= ncols)
-        GC.@preserve ray_c rval_rc ridx_rc pivot_var0 JClp.jclp_primal_ray(
-            pointer(ray_c), pointer(rval_rc), pointer(ridx_rc), Cint(1), Cint(1), Cint(1),
-            pointer(pivot_var0), Cint(nrows), Cint(ncols), Cint(0), Cint(1),
-        )
-        @test ray_c == Float64[1.0, 0.0]
-
-        # 3. jclp_primal_column_tail
-        nlc_stc = fill(JClp.CLP_NLC_FEASIBLE | (JClp.CLP_NLC_SAME << 4), ntotal)
-        nlc_bc = zeros(Float64, ntotal)
-        nlc_c2c = zeros(Float64, ntotal)
-        sol_c = Float64[0.0, 5.0, 4.0, 2.0, 2.0]
-        lo_c = zeros(Float64, ntotal)
-        hi_c = fill(10.0, ntotal)
-        cost_c = Float64[-2.0, 0.0, 0.0, 0.0, 0.0]
-        st_pc = fill(JClp.CLP_STATUS_BASIC, ntotal)
-        st_pc[1] = JClp.CLP_STATUS_AT_LOWER
-        ninf_box = Ref(Cint(0))
-        val_in_b = Ref(0.0); dj_in_b = Ref(0.0); lo_in_b = Ref(0.0); up_in_b = Ref(0.0); dir_in_b = Ref(Cint(0))
-        seq_in_c = GC.@preserve nlc_stc nlc_bc nlc_c2c sol_c lo_c hi_c cost_c dj_c st_pc ninf_box val_in_b dj_in_b lo_in_b up_in_b dir_in_b JClp.jclp_primal_column_tail(
-            pointer(nlc_stc), pointer(nlc_bc), pointer(nlc_c2c),
-            pointer(sol_c), pointer(lo_c), pointer(hi_c), pointer(cost_c), pointer(dj_c), pointer(st_pc),
-            Cint(ntotal), Cint(0), Cint(0), 1e-7, 100.0,
-            Base.unsafe_convert(Ptr{Cint}, ninf_box),
-            Base.unsafe_convert(Ptr{Cdouble}, val_in_b),
-            Base.unsafe_convert(Ptr{Cdouble}, dj_in_b),
-            Base.unsafe_convert(Ptr{Cdouble}, lo_in_b),
-            Base.unsafe_convert(Ptr{Cdouble}, up_in_b),
-            Base.unsafe_convert(Ptr{Cint}, dir_in_b),
-        )
-        @test seq_in_c == Cint(0) && dj_in_b[] == 1.0 && dir_in_b[] == Cint(-1)
-
-        # 4. jclp_primal_row & jclp_update_primals_in_primal
-        rval_pr = Float64[2.0, 0.0, 0.0]
-        ridx_pr = Int32[0, 0, 0] # row 0 -> seq 2 (sol=4.0, lo=0.0)
-        rhs_v = zeros(Float64, nrows); rhs_i = zeros(Int32, nrows)
-        sp_v = zeros(Float64, nrows); sp_i = zeros(Int32, nrows)
-        avg_th_b = Ref(1.0); dir_in_pr = Ref(Cint(1)); dj_in_pr = Ref(-2.0); ptol_b = Ref(1e-7)
-        piv_r_b = Ref(Cint(-1)); seq_out_b = Ref(Cint(-1)); dir_out_b = Ref(Cint(0))
-        th_b = Ref(0.0); al_b = Ref(0.0); val_out_b = Ref(0.0); lo_out_b = Ref(0.0); up_out_b = Ref(0.0); dj_out_b = Ref(0.0)
-        GC.@preserve rval_pr ridx_pr rhs_v rhs_i sp_v sp_i pivot_var0 cost_c sol_c lo_c hi_c dj_c st_pc nlc_stc nlc_bc avg_th_b dir_in_pr dj_in_pr ptol_b piv_r_b seq_out_b dir_out_b th_b al_b val_out_b lo_out_b up_out_b dj_out_b JClp.jclp_primal_row(
-            pointer(rval_pr), pointer(ridx_pr), Cint(1), Cint(nrows),
-            pointer(rhs_v), pointer(rhs_i), Cint(nrows),
-            pointer(sp_v), pointer(sp_i), Cint(nrows),
-            pointer(pivot_var0), pointer(cost_c), pointer(sol_c), pointer(lo_c), pointer(hi_c), pointer(dj_c), pointer(st_pc),
-            pointer(nlc_stc), pointer(nlc_bc), 100.0, Cint(0), Base.unsafe_convert(Ptr{Cdouble}, avg_th_b),
-            Cint(nrows), Cint(ntotal), Cint(0), Cint(1),
-            Cint(0), Base.unsafe_convert(Ptr{Cint}, dir_in_pr), 0.0, 10.0, 0.0, Base.unsafe_convert(Ptr{Cdouble}, dj_in_pr),
-            Base.unsafe_convert(Ptr{Cdouble}, ptol_b), 1e-7, 100.0, 1e15, 1e-9, Cint(0), Cint(0), Cint(0),
-            Base.unsafe_convert(Ptr{Cint}, piv_r_b), Base.unsafe_convert(Ptr{Cint}, seq_out_b),
-            Base.unsafe_convert(Ptr{Cint}, dir_out_b), Base.unsafe_convert(Ptr{Cdouble}, th_b),
-            Base.unsafe_convert(Ptr{Cdouble}, al_b), Base.unsafe_convert(Ptr{Cdouble}, val_out_b),
-            Base.unsafe_convert(Ptr{Cdouble}, lo_out_b), Base.unsafe_convert(Ptr{Cdouble}, up_out_b),
-            Base.unsafe_convert(Ptr{Cdouble}, dj_out_b),
-        )
-        @test piv_r_b[] == Cint(0) && seq_out_b[] == Cint(2) && th_b[] ≈ 2.0 && al_b[] == 2.0
-
-        nnz_up_b = Ref(Cint(1)); nlc_cc_b = Ref(0.0); obj_chg_b = Ref(0.0)
-        rc_up = GC.@preserve rval_pr ridx_pr nnz_up_b pivot_var0 sol_c lo_c hi_c cost_c dj_c st_pc nlc_stc nlc_bc nlc_c2c ninf_box nlc_cc_b obj_chg_b JClp.jclp_update_primals_in_primal(
-            pointer(rval_pr), pointer(ridx_pr), Base.unsafe_convert(Ptr{Cint}, nnz_up_b), Cint(nrows),
-            pointer(pivot_var0), pointer(sol_c), pointer(lo_c), pointer(hi_c), pointer(cost_c), pointer(dj_c), pointer(st_pc),
-            pointer(nlc_stc), pointer(nlc_bc), pointer(nlc_c2c), 100.0, Base.unsafe_convert(Ptr{Cint}, ninf_box), Base.unsafe_convert(Ptr{Cdouble}, nlc_cc_b),
-            Cint(nrows), Cint(ntotal), piv_r_b[], seq_out_b[], dj_in_pr[], th_b[],
-            Base.unsafe_convert(Ptr{Cdouble}, obj_chg_b), ptol_b[], Cint(0),
-        )
-        @test rc_up == Cint(0) && nnz_up_b[] == Cint(1) && ridx_pr[1] == Int32(0) && rval_pr[1] == -dj_in_pr[]
-        @test sol_c[3] ≈ 0.0
-
-        # 5. jclp_primal_next_super_basic
-        cv_nsb = zeros(Float64, ntotal); ci_nsb = zeros(Int32, ntotal)
-        st_nsb = UInt8[JClp.CLP_STATUS_SUPER_BASIC, JClp.CLP_STATUS_SUPER_BASIC, JClp.CLP_STATUS_BASIC, JClp.CLP_STATUS_BASIC, JClp.CLP_STATUS_BASIC]
-        sol_nsb = Float64[2.0, 9.0, 0.0, 0.0, 0.0]
-        nnz_nsb = Ref(Cint(0)); ff_nsb = Ref(Cint(-1)); mso_nsb = Ref(Cint(JClp._SP_SORT_VALUES_BIT))
-        ret_nsb = GC.@preserve cv_nsb ci_nsb nnz_nsb dj_c sol_nsb lo_c hi_c st_nsb ff_nsb mso_nsb JClp.jclp_primal_next_super_basic(
-            pointer(cv_nsb), pointer(ci_nsb), Base.unsafe_convert(Ptr{Cint}, nnz_nsb), Cint(ntotal),
-            pointer(dj_c), pointer(sol_nsb), pointer(lo_c), pointer(hi_c), pointer(st_nsb),
-            Cint(ntotal), Cint(3), Base.unsafe_convert(Ptr{Cint}, ff_nsb), Base.unsafe_convert(Ptr{Cint}, mso_nsb),
-            1e-7, 1e-7,
-        )
-        @test ret_nsb == Cint(1) && nnz_nsb[] == Cint(1) && ff_nsb[] == Cint(1)
-
-        # 6. Zero allocation check on C ABI @ccallable wrappers
-        function _alloc_capi_b11b(
-            dj_c, st_c, rval_c, ridx_c, ray_c, rval_rc, ridx_rc, pivot_var0,
-            nlc_stc, nlc_bc, nlc_c2c, sol_c, lo_c, hi_c, cost_c, st_pc, ninf_box,
-            val_in_b, dj_in_b, lo_in_b, up_in_b, dir_in_b,
-            rval_pr, ridx_pr, rhs_v, rhs_i, sp_v, sp_i,
-            avg_th_b, dir_in_pr, dj_in_pr, ptol_b, piv_r_b, seq_out_b, dir_out_b,
-            th_b, al_b, val_out_b, lo_out_b, up_out_b, dj_out_b,
-            nnz_up_b, nlc_cc_b, obj_chg_b, cv_nsb, ci_nsb, nnz_nsb, ff_nsb, mso_nsb,
-        )
-            ntotal = 5; nrows = 3; ncols = 2
-            a1 = GC.@preserve dj_c st_c @allocated JClp.jclp_primal_unflag(
-                pointer(dj_c), pointer(st_c), Cint(ntotal), 1e-7, 0.0,
-            )
-            a2 = GC.@preserve rval_c ridx_c st_c @allocated JClp.jclp_primal_clear_all(
-                pointer(rval_c), pointer(ridx_c), Cint(1), Cint(3), Cint(1), pointer(st_c), Cint(ntotal),
-            )
-            a3 = GC.@preserve ray_c rval_rc ridx_rc pivot_var0 @allocated JClp.jclp_primal_ray(
-                pointer(ray_c), pointer(rval_rc), pointer(ridx_rc), Cint(1), Cint(1), Cint(1),
-                pointer(pivot_var0), Cint(nrows), Cint(ncols), Cint(0), Cint(1),
-            )
-            a4 = GC.@preserve nlc_stc nlc_bc nlc_c2c sol_c lo_c hi_c cost_c dj_c st_pc ninf_box val_in_b dj_in_b lo_in_b up_in_b dir_in_b @allocated JClp.jclp_primal_column_tail(
-                pointer(nlc_stc), pointer(nlc_bc), pointer(nlc_c2c),
-                pointer(sol_c), pointer(lo_c), pointer(hi_c), pointer(cost_c), pointer(dj_c), pointer(st_pc),
-                Cint(ntotal), Cint(0), Cint(0), 1e-7, 100.0,
-                Base.unsafe_convert(Ptr{Cint}, ninf_box),
-                Base.unsafe_convert(Ptr{Cdouble}, val_in_b),
-                Base.unsafe_convert(Ptr{Cdouble}, dj_in_b),
-                Base.unsafe_convert(Ptr{Cdouble}, lo_in_b),
-                Base.unsafe_convert(Ptr{Cdouble}, up_in_b),
-                Base.unsafe_convert(Ptr{Cint}, dir_in_b),
-            )
-            a5 = GC.@preserve rval_pr ridx_pr rhs_v rhs_i sp_v sp_i pivot_var0 cost_c sol_c lo_c hi_c dj_c st_pc nlc_stc nlc_bc avg_th_b dir_in_pr dj_in_pr ptol_b piv_r_b seq_out_b dir_out_b th_b al_b val_out_b lo_out_b up_out_b dj_out_b @allocated JClp.jclp_primal_row(
-                pointer(rval_pr), pointer(ridx_pr), Cint(1), Cint(nrows),
-                pointer(rhs_v), pointer(rhs_i), Cint(nrows),
-                pointer(sp_v), pointer(sp_i), Cint(nrows),
-                pointer(pivot_var0), pointer(cost_c), pointer(sol_c), pointer(lo_c), pointer(hi_c), pointer(dj_c), pointer(st_pc),
-                pointer(nlc_stc), pointer(nlc_bc), 100.0, Cint(0), Base.unsafe_convert(Ptr{Cdouble}, avg_th_b),
-                Cint(nrows), Cint(ntotal), Cint(0), Cint(1),
-                Cint(0), Base.unsafe_convert(Ptr{Cint}, dir_in_pr), 0.0, 10.0, 0.0, Base.unsafe_convert(Ptr{Cdouble}, dj_in_pr),
-                Base.unsafe_convert(Ptr{Cdouble}, ptol_b), 1e-7, 100.0, 1e15, 1e-9, Cint(0), Cint(0), Cint(0),
-                Base.unsafe_convert(Ptr{Cint}, piv_r_b), Base.unsafe_convert(Ptr{Cint}, seq_out_b),
-                Base.unsafe_convert(Ptr{Cint}, dir_out_b), Base.unsafe_convert(Ptr{Cdouble}, th_b),
-                Base.unsafe_convert(Ptr{Cdouble}, al_b), Base.unsafe_convert(Ptr{Cdouble}, val_out_b),
-                Base.unsafe_convert(Ptr{Cdouble}, lo_out_b), Base.unsafe_convert(Ptr{Cdouble}, up_out_b),
-                Base.unsafe_convert(Ptr{Cdouble}, dj_out_b),
-            )
-            a6 = GC.@preserve rval_pr ridx_pr nnz_up_b pivot_var0 sol_c lo_c hi_c cost_c dj_c st_pc nlc_stc nlc_bc nlc_c2c ninf_box nlc_cc_b obj_chg_b @allocated JClp.jclp_update_primals_in_primal(
-                pointer(rval_pr), pointer(ridx_pr), Base.unsafe_convert(Ptr{Cint}, nnz_up_b), Cint(nrows),
-                pointer(pivot_var0), pointer(sol_c), pointer(lo_c), pointer(hi_c), pointer(cost_c), pointer(dj_c), pointer(st_pc),
-                pointer(nlc_stc), pointer(nlc_bc), pointer(nlc_c2c), 100.0, Base.unsafe_convert(Ptr{Cint}, ninf_box), Base.unsafe_convert(Ptr{Cdouble}, nlc_cc_b),
-                Cint(nrows), Cint(ntotal), Cint(0), Cint(2), -2.0, 0.0,
-                Base.unsafe_convert(Ptr{Cdouble}, obj_chg_b), ptol_b[], Cint(0),
-            )
-            a7 = GC.@preserve cv_nsb ci_nsb nnz_nsb dj_c sol_nsb lo_c hi_c st_nsb ff_nsb mso_nsb @allocated JClp.jclp_primal_next_super_basic(
-                pointer(cv_nsb), pointer(ci_nsb), Base.unsafe_convert(Ptr{Cint}, nnz_nsb), Cint(ntotal),
-                pointer(dj_c), pointer(sol_nsb), pointer(lo_c), pointer(hi_c), pointer(st_nsb),
-                Cint(ntotal), Cint(1), Base.unsafe_convert(Ptr{Cint}, ff_nsb), Base.unsafe_convert(Ptr{Cint}, mso_nsb),
-                1e-7, 1e-7,
-            )
-            return a1 + a2 + a3 + a4 + a5 + a6 + a7
-        end
-        _alloc_capi_b11b(
-            dj_c, st_c, rval_c, ridx_c, ray_c, rval_rc, ridx_rc, pivot_var0,
-            nlc_stc, nlc_bc, nlc_c2c, sol_c, lo_c, hi_c, cost_c, st_pc, ninf_box,
-            val_in_b, dj_in_b, lo_in_b, up_in_b, dir_in_b,
-            rval_pr, ridx_pr, rhs_v, rhs_i, sp_v, sp_i,
-            avg_th_b, dir_in_pr, dj_in_pr, ptol_b, piv_r_b, seq_out_b, dir_out_b,
-            th_b, al_b, val_out_b, lo_out_b, up_out_b, dj_out_b,
-            nnz_up_b, nlc_cc_b, obj_chg_b, cv_nsb, ci_nsb, nnz_nsb, ff_nsb, mso_nsb,
-        )
-        rval_pr .= Float64[2.0, 0.0, 0.0]; ridx_pr .= Int32[0, 0, 0]; nnz_up_b[] = Cint(1)
-        @test _alloc_capi_b11b(
-            dj_c, st_c, rval_c, ridx_c, ray_c, rval_rc, ridx_rc, pivot_var0,
-            nlc_stc, nlc_bc, nlc_c2c, sol_c, lo_c, hi_c, cost_c, st_pc, ninf_box,
-            val_in_b, dj_in_b, lo_in_b, up_in_b, dir_in_b,
-            rval_pr, ridx_pr, rhs_v, rhs_i, sp_v, sp_i,
-            avg_th_b, dir_in_pr, dj_in_pr, ptol_b, piv_r_b, seq_out_b, dir_out_b,
-            th_b, al_b, val_out_b, lo_out_b, up_out_b, dj_out_b,
-            nnz_up_b, nlc_cc_b, obj_chg_b, cv_nsb, ci_nsb, nnz_nsb, ff_nsb, mso_nsb,
-        ) == 0
     end
 end

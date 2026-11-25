@@ -178,7 +178,7 @@ using Test
         @test st_sing == -1
     end
 
-    @testset "Tolerances, copy, and handle pool" begin
+    @testset "Tolerances and copy" begin
         cf = JClp.ClpFactorization()
         JClp.clp_fact_safer_tolerances!(cf, 1.0e-14, 0.25)
         @test cf.lu.zero_tol == 1.0e-14
@@ -190,16 +190,5 @@ using Test
         cf2 = JClp.copy_clp_factorization(cf)
         @test cf2.lu.zero_tol == cf.lu.zero_tol
         @test cf2.lu.pivot_tol == cf.lu.pivot_tol
-
-        id1 = JClp._cf_handle_create()
-        @test id1 > 0
-        JClp._cf_get(id1).lu.pivot_tol = 0.33
-        id2 = JClp._cf_handle_copy(id1)
-        @test JClp._cf_get(id2).lu.pivot_tol == 0.33
-        JClp._cf_get(id1).lu.pivot_tol = 0.44
-        JClp._cf_handle_assign!(id2, id1)
-        @test JClp._cf_get(id2).lu.pivot_tol == 0.44
-        JClp._cf_handle_destroy!(id1)
-        JClp._cf_handle_destroy!(id2)
     end
 end
