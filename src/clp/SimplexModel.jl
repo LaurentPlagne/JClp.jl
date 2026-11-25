@@ -645,7 +645,7 @@ function create_rim!(m::ClpSimplexModel)::Nothing
                     m.solution[seq] = 0.0
                 end
             end
-        elseif st == CLP_STATUS_AT_LOWER && m.lower[seq] == m.upper[seq]
+        elseif (st == CLP_STATUS_AT_LOWER || st == CLP_STATUS_AT_UPPER) && m.lower[seq] == m.upper[seq]
             m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FIXED)
         end
     end

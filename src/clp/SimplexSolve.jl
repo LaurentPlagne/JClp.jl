@@ -893,6 +893,14 @@ function primal!(
         end
     end
 
+    if m.problem_status < 0
+        if m.num_primal_infeas == 0 && m.num_dual_infeas == 0 && m.nlc_num_infeas == 0
+            m.problem_status = CLP_STATUS_OPTIMAL
+        else
+            m.problem_status = CLP_STATUS_MAX_ITERATIONS
+        end
+    end
+
     _sm_nlc_restore_all!(m)
     delete_rim!(m)
     return m.problem_status

@@ -539,7 +539,10 @@ function clp_all_slack_basis!(
     @inbounds for j in 1:ncols
         lo = col_lo[j]
         hi = col_hi[j]
-        if lo >= 0.0
+        if lo == hi
+            col_act[j] = lo
+            status[j] = _sb_set_status(status[j], CLP_STATUS_IS_FIXED)
+        elseif lo >= 0.0
             col_act[j] = lo
             status[j] = _sb_set_status(status[j], CLP_STATUS_AT_LOWER)
         elseif hi <= 0.0

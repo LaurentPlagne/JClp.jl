@@ -11,18 +11,21 @@ const _MPS_INF = floatmax(Float64)
         return v
     end
     # Handle Fortran 'D'/'d' exponents if present
-    s2 = replace(s, 'D' => 'e', 'd' => 'e')
-    v2 = tryparse(Float64, s2)
-    return v2 === nothing ? 0.0 : v2
+    if occursin('D', s) || occursin('d', s)
+        s2 = replace(s, 'D' => 'e', 'd' => 'e')
+        v2 = tryparse(Float64, s2)
+        return v2 === nothing ? 0.0 : v2
+    end
+    return 0.0
 end
 
-function _mps_tokenize(line::AbstractString)::Vector{SubString{String}}
+function _mps_tokenize!(tokens::Vector{SubString{String}}, line::AbstractString)::Vector{SubString{String}}
     # Split on ASCII whitespace; strip inline comments starting with '$'
-    s = String(line)
-    tokens = SubString{String}[]
+    empty!(tokens)
+    s = line isa String ? line : String(line)
     n = ncodeunits(s)
     i = 1
-    while i <= n
+    @inbounds while i <= n
         while i <= n && (codeunit(s, i) == 0x20 || codeunit(s, i) == 0x09 || codeunit(s, i) == 0x0d || codeunit(s, i) == 0x0a)
             i += 1
         end
@@ -40,15 +43,80 @@ function _mps_tokenize(line::AbstractString)::Vector{SubString{String}}
     return tokens
 end
 
-"""
-    clp_read_mps(path::AbstractString) -> NamedTuple
+@inline function _mps_fixed_field(line::String, a::Int, b::Int)::SubString{String}
+    n = ncodeunits(line)
+    a > n && return SubString(line, 1, 0)
+    return strip(SubString(line, a, min(b, n)))
+end
 
-Read an LP in MPS format (fixed or free) into 1-based CSC representation:
-`(name, nrows, ncols, col_starts, col_indices, col_elements,
-  col_lower, col_upper, objective, row_lower, row_upper,
-  obj_offset, obj_sense)`.
-"""
-function clp_read_mps(path::AbstractString)
+@inline function _mps_norm_btype(t::SubString{String})::Symbol
+    if ncodeunits(t) == 2
+        b1 = codeunit(t, 1)
+        b2 = codeunit(t, 2)
+        (0x61 <= b1 <= 0x7a) && (b1 -= 0x20)
+        (0x61 <= b2 <= 0x7a) && (b2 -= 0x20)
+        if b1 == UInt8('F') && b2 == UInt8('R')
+            return :FR
+        elseif b1 == UInt8('M') && b2 == UInt8('I')
+            return :MI
+        elseif b1 == UInt8('P') && b2 == UInt8('L')
+            return :PL
+        elseif b1 == UInt8('B') && b2 == UInt8('V')
+            return :BV
+        elseif b1 == UInt8('L') && b2 == UInt8('O')
+            return :LO
+        elseif b1 == UInt8('L') && b2 == UInt8('I')
+            return :LI
+        elseif b1 == UInt8('U') && b2 == UInt8('P')
+            return :UP
+        elseif b1 == UInt8('U') && b2 == UInt8('I')
+            return :UI
+        elseif b1 == UInt8('F') && b2 == UInt8('X')
+            return :FX
+        end
+    end
+    return :OTHER
+end
+
+@inline function _mps_finalize_rows!(
+    rows_finalized::Bool,
+    row_types::Vector{UInt8},
+    rhs_vals::Vector{Float64},
+    range_vals::Vector{Float64},
+    has_range::Vector{Bool},
+)::Bool
+    if !rows_finalized
+        nr = length(row_types)
+        resize!(rhs_vals, nr); fill!(rhs_vals, 0.0)
+        resize!(range_vals, nr); fill!(range_vals, 0.0)
+        resize!(has_range, nr); fill!(has_range, false)
+    end
+    return true
+end
+
+@inline function _mps_finalize_cols!(
+    cols_finalized::Bool,
+    obj_vec::Vector{Float64},
+    col_is_int::Vector{Bool},
+    col_lo::Vector{Float64},
+    col_hi::Vector{Float64},
+    col_has_lo::Vector{Bool},
+    col_has_hi::Vector{Bool},
+)::Bool
+    if !cols_finalized
+        nc = length(obj_vec)
+        resize!(col_lo, nc); fill!(col_lo, 0.0)
+        resize!(col_hi, nc)
+        @inbounds for j in 1:nc
+            col_hi[j] = col_is_int[j] ? 1.0 : _MPS_INF
+        end
+        resize!(col_has_lo, nc); fill!(col_has_lo, false)
+        resize!(col_has_hi, nc); fill!(col_has_hi, false)
+    end
+    return true
+end
+
+function _clp_read_mps_io(io::IO)
     prob_name = ""
     obj_sense = 1.0  # 1.0 = minimize, -1.0 = maximize
     obj_offset = 0.0
@@ -58,8 +126,10 @@ function clp_read_mps(path::AbstractString)
     obj_row_name = ""
 
     col_map = Dict{String,Int}()
-    col_rows = Vector{Int32}[]
-    col_vals = Vector{Float64}[]
+    trip_col = Int32[]
+    trip_row = Int32[]
+    trip_val = Float64[]
+    col_counts = Int32[]
     obj_vec = Float64[]
     col_is_int = Bool[]
     in_intorg = false
@@ -78,384 +148,334 @@ function clp_read_mps(path::AbstractString)
     section = :NONE
     rows_finalized = false
     cols_finalized = false
+    toks = SubString{String}[]
 
-    function _finalize_rows!()
-        if !rows_finalized
-            nr = length(row_types)
-            resize!(rhs_vals, nr); fill!(rhs_vals, 0.0)
-            resize!(range_vals, nr); fill!(range_vals, 0.0)
-            resize!(has_range, nr); fill!(has_range, false)
-            rows_finalized = true
+    for raw_line in eachline(io)
+        isempty(raw_line) && continue
+        c1 = codeunit(raw_line, 1)
+        if c1 == UInt8('*')
+            continue
         end
-    end
-
-    function _finalize_cols!()
-        if !cols_finalized
-            nc = length(obj_vec)
-            resize!(col_lo, nc); fill!(col_lo, 0.0)
-            resize!(col_hi, nc)
-            @inbounds for j in 1:nc
-                col_hi[j] = col_is_int[j] ? 1.0 : _MPS_INF
-            end
-            resize!(col_has_lo, nc); fill!(col_has_lo, false)
-            resize!(col_has_hi, nc); fill!(col_has_hi, false)
-            cols_finalized = true
-        end
-    end
-
-    @inline function _mps_fixed_field(line::AbstractString, a::Int, b::Int)::String
-        n = ncodeunits(line)
-        a > n && return ""
-        return strip(String(SubString(line, a, min(b, n))))
-    end
-
-    _parse_io = function (io)
-        for raw_line in eachline(io)
-            isempty(raw_line) && continue
-            c1 = codeunit(raw_line, 1)
-            if c1 == UInt8('*')
-                continue
-            end
-            # Section header starts in column 1 (non-whitespace)
-            if c1 != 0x20 && c1 != 0x09
-                toks = _mps_tokenize(raw_line)
-                isempty(toks) && continue
-                hdr = uppercase(String(toks[1]))
-                if hdr == "NAME"
-                    prob_name = length(toks) >= 2 ? String(toks[2]) : ""
-                    section = :NAME
-                elseif hdr == "OBJSENSE"
-                    section = :OBJSENSE
-                elseif hdr == "OBJNAME"
-                    section = :OBJNAME
-                elseif hdr == "ROWS"
-                    section = :ROWS
-                elseif hdr == "COLUMNS"
-                    _finalize_rows!()
-                    section = :COLUMNS
-                elseif hdr == "RHS"
-                    _finalize_rows!()
-                    _finalize_cols!()
-                    section = :RHS
-                elseif hdr == "RANGES"
-                    _finalize_rows!()
-                    _finalize_cols!()
-                    section = :RANGES
-                elseif hdr == "BOUNDS"
-                    _finalize_rows!()
-                    _finalize_cols!()
-                    section = :BOUNDS
-                elseif hdr == "ENDATA"
-                    break
-                else
-                    section = :OTHER
-                end
-                continue
-            end
-
-            toks = _mps_tokenize(raw_line)
+        # Section header starts in column 1 (non-whitespace)
+        if c1 != 0x20 && c1 != 0x09
+            _mps_tokenize!(toks, raw_line)
             isempty(toks) && continue
+            hdr = uppercase(String(toks[1]))
+            if hdr == "NAME"
+                prob_name = length(toks) >= 2 ? String(toks[2]) : ""
+                section = :NAME
+            elseif hdr == "OBJSENSE"
+                section = :OBJSENSE
+            elseif hdr == "OBJNAME"
+                section = :OBJNAME
+            elseif hdr == "ROWS"
+                section = :ROWS
+            elseif hdr == "COLUMNS"
+                rows_finalized = _mps_finalize_rows!(rows_finalized, row_types, rhs_vals, range_vals, has_range)
+                section = :COLUMNS
+            elseif hdr == "RHS"
+                rows_finalized = _mps_finalize_rows!(rows_finalized, row_types, rhs_vals, range_vals, has_range)
+                cols_finalized = _mps_finalize_cols!(cols_finalized, obj_vec, col_is_int, col_lo, col_hi, col_has_lo, col_has_hi)
+                section = :RHS
+            elseif hdr == "RANGES"
+                rows_finalized = _mps_finalize_rows!(rows_finalized, row_types, rhs_vals, range_vals, has_range)
+                cols_finalized = _mps_finalize_cols!(cols_finalized, obj_vec, col_is_int, col_lo, col_hi, col_has_lo, col_has_hi)
+                section = :RANGES
+            elseif hdr == "BOUNDS"
+                rows_finalized = _mps_finalize_rows!(rows_finalized, row_types, rhs_vals, range_vals, has_range)
+                cols_finalized = _mps_finalize_cols!(cols_finalized, obj_vec, col_is_int, col_lo, col_hi, col_has_lo, col_has_hi)
+                section = :BOUNDS
+            elseif hdr == "ENDATA"
+                break
+            else
+                section = :OTHER
+            end
+            continue
+        end
 
-            if section === :OBJSENSE
-                s_u = uppercase(String(toks[1]))
-                if startswith(s_u, "MAX")
-                    obj_sense = -1.0
-                elseif startswith(s_u, "MIN")
-                    obj_sense = 1.0
+        _mps_tokenize!(toks, raw_line)
+        isempty(toks) && continue
+
+        if section === :OBJSENSE
+            s_u = uppercase(String(toks[1]))
+            if startswith(s_u, "MAX")
+                obj_sense = -1.0
+            elseif startswith(s_u, "MIN")
+                obj_sense = 1.0
+            end
+        elseif section === :OBJNAME
+            obj_row_name = String(toks[1])
+        elseif section === :ROWS
+            length(toks) < 2 && continue
+            rt = uppercase(toks[1][1])
+            rname_sub = length(toks) == 2 ? toks[2] : _mps_fixed_field(raw_line, 5, 12)
+            isempty(rname_sub) && (rname_sub = toks[2])
+            rname = String(rname_sub)
+            if rt == 'N'
+                if isempty(obj_row_name)
+                    obj_row_name = rname
                 end
-            elseif section === :OBJNAME
-                obj_row_name = String(toks[1])
-            elseif section === :ROWS
-                length(toks) < 2 && continue
-                rt = uppercase(String(toks[1]))[1]
-                rname = length(toks) == 2 ? String(toks[2]) : _mps_fixed_field(raw_line, 5, 12)
-                isempty(rname) && (rname = String(toks[2]))
-                if rt == 'N'
-                    if isempty(obj_row_name)
-                        obj_row_name = rname
-                    end
-                    # Store objective row as 0 (and other N rows as -1 to ignore)
-                    row_map[rname] = (rname == obj_row_name) ? 0 : -1
-                else
-                    push!(row_types, UInt8(rt))
-                    row_map[rname] = length(row_types)
+                # Store objective row as 0 (and other N rows as -1 to ignore)
+                row_map[rname] = (rname == obj_row_name) ? 0 : -1
+            else
+                push!(row_types, UInt8(rt))
+                row_map[rname] = length(row_types)
+            end
+        elseif section === :COLUMNS
+            # Track integer markers: 'MARKER' 'INTORG'/'INTEND'
+            if length(toks) >= 3 && toks[2] == "'MARKER'"
+                if toks[3] == "'INTORG'"
+                    in_intorg = true
+                elseif toks[3] == "'INTEND'"
+                    in_intorg = false
                 end
-            elseif section === :COLUMNS
-                # Track integer markers: 'MARKER' 'INTORG'/'INTEND'
-                if length(toks) >= 3 && toks[2] == "'MARKER'"
-                    if toks[3] == "'INTORG'"
-                        in_intorg = true
-                    elseif toks[3] == "'INTEND'"
-                        in_intorg = false
-                    end
-                    continue
+                continue
+            end
+            length(toks) < 3 && continue
+            # Detect fixed-format embedded spaces in column/row names
+            use_fixed = !haskey(row_map, toks[2]) && ncodeunits(raw_line) >= 25
+            if use_fixed
+                cname_sub = _mps_fixed_field(raw_line, 5, 12)
+                isempty(cname_sub) && continue
+                cidx = get(col_map, cname_sub, 0)
+                if cidx == 0
+                    cidx = length(obj_vec) + 1
+                    col_map[String(cname_sub)] = cidx
+                    push!(col_counts, Int32(0))
+                    push!(obj_vec, 0.0)
+                    push!(col_is_int, in_intorg)
                 end
-                length(toks) < 3 && continue
-                # Detect fixed-format embedded spaces in column/row names
-                use_fixed = !haskey(row_map, String(toks[2])) && ncodeunits(raw_line) >= 25
-                if use_fixed
-                    cname = _mps_fixed_field(raw_line, 5, 12)
-                    isempty(cname) && continue
-                    cidx = get(col_map, cname, 0)
-                    if cidx == 0
-                        cidx = length(obj_vec) + 1
-                        col_map[cname] = cidx
-                        push!(col_rows, Int32[])
-                        push!(col_vals, Float64[])
-                        push!(obj_vec, 0.0)
-                        push!(col_is_int, in_intorg)
-                    end
-                    r1 = _mps_fixed_field(raw_line, 15, 22)
-                    v1s = _mps_fixed_field(raw_line, 25, 36)
-                    if !isempty(r1) && !isempty(v1s)
-                        ridx = get(row_map, r1, -1)
-                        val = _mps_parse_float(v1s)
+                for (fa, fb, va, vb) in ((15, 22, 25, 36), (40, 47, 50, 61))
+                    rn = _mps_fixed_field(raw_line, fa, fb)
+                    vs = _mps_fixed_field(raw_line, va, vb)
+                    if !isempty(rn) && !isempty(vs)
+                        ridx = get(row_map, rn, -1)
+                        val = _mps_parse_float(vs)
                         if ridx == 0
                             obj_vec[cidx] += val
                         elseif ridx > 0 && val != 0.0
-                            push!(col_rows[cidx], Int32(ridx))
-                            push!(col_vals[cidx], val)
+                            push!(trip_col, Int32(cidx))
+                            push!(trip_row, Int32(ridx))
+                            push!(trip_val, val)
+                            col_counts[cidx] += Int32(1)
                         end
                     end
-                    r2 = _mps_fixed_field(raw_line, 40, 47)
-                    v2s = _mps_fixed_field(raw_line, 50, 61)
-                    if !isempty(r2) && !isempty(v2s)
-                        ridx = get(row_map, r2, -1)
-                        val = _mps_parse_float(v2s)
-                        if ridx == 0
-                            obj_vec[cidx] += val
-                        elseif ridx > 0 && val != 0.0
-                            push!(col_rows[cidx], Int32(ridx))
-                            push!(col_vals[cidx], val)
-                        end
-                    end
-                else
-                    cname = String(toks[1])
-                    cidx = get(col_map, cname, 0)
-                    if cidx == 0
-                        cidx = length(obj_vec) + 1
-                        col_map[cname] = cidx
-                        push!(col_rows, Int32[])
-                        push!(col_vals, Float64[])
-                        push!(obj_vec, 0.0)
-                        push!(col_is_int, in_intorg)
-                    end
-                    k = 2
-                    while k + 1 <= length(toks)
-                        rname = String(toks[k])
-                        val = _mps_parse_float(toks[k + 1])
-                        ridx = get(row_map, rname, -1)
-                        if ridx == 0
-                            obj_vec[cidx] += val
-                        elseif ridx > 0 && val != 0.0
-                            push!(col_rows[cidx], Int32(ridx))
-                            push!(col_vals[cidx], val)
-                        end
-                        k += 2
-                    end
                 end
-            elseif section === :RHS
-                # Handle fixed-format embedded spaces in row names if free-format fails
-                use_fixed_rhs = false
-                if iseven(length(toks)) && haskey(row_map, String(toks[1]))
-                    rset = ""
-                    start_k = 1
-                elseif length(toks) >= 2 && haskey(row_map, String(toks[2]))
-                    rset = String(toks[1])
-                    start_k = 2
-                elseif ncodeunits(raw_line) >= 25
-                    use_fixed_rhs = true
-                    rset = _mps_fixed_field(raw_line, 5, 12)
-                    start_k = 1
-                else
-                    rset = String(toks[1])
-                    start_k = 2
+            else
+                cname_sub = toks[1]
+                cidx = get(col_map, cname_sub, 0)
+                if cidx == 0
+                    cidx = length(obj_vec) + 1
+                    col_map[String(cname_sub)] = cidx
+                    push!(col_counts, Int32(0))
+                    push!(obj_vec, 0.0)
+                    push!(col_is_int, in_intorg)
                 end
-                if isempty(rhs_name) && !isempty(rset)
-                    rhs_name = rset
-                end
-                if !isempty(rhs_name) && rset != rhs_name && !isempty(rset)
-                    continue
-                end
-                if use_fixed_rhs
-                    for (fa, fb, va, vb) in ((15, 22, 25, 36), (40, 47, 50, 61))
-                        rn = _mps_fixed_field(raw_line, fa, fb)
-                        vs = _mps_fixed_field(raw_line, va, vb)
-                        if !isempty(rn) && !isempty(vs)
-                            ridx = get(row_map, rn, -1)
-                            val = _mps_parse_float(vs)
-                            if ridx == 0
-                                obj_offset = val
-                            elseif ridx > 0
-                                rhs_vals[ridx] = val
-                            end
-                        end
+                k = 2
+                ntoks = length(toks)
+                while k + 1 <= ntoks
+                    val = _mps_parse_float(toks[k + 1])
+                    ridx = get(row_map, toks[k], -1)
+                    if ridx == 0
+                        obj_vec[cidx] += val
+                    elseif ridx > 0 && val != 0.0
+                        push!(trip_col, Int32(cidx))
+                        push!(trip_row, Int32(ridx))
+                        push!(trip_val, val)
+                        col_counts[cidx] += Int32(1)
                     end
-                else
-                    k = start_k
-                    while k + 1 <= length(toks)
-                        rname = String(toks[k])
-                        val = _mps_parse_float(toks[k + 1])
-                        ridx = get(row_map, rname, -1)
+                    k += 2
+                end
+            end
+        elseif section === :RHS
+            # Handle fixed-format embedded spaces in row names if free-format fails
+            use_fixed_rhs = false
+            if iseven(length(toks)) && haskey(row_map, toks[1])
+                rset = SubString(raw_line, 1, 0)
+                start_k = 1
+            elseif length(toks) >= 2 && haskey(row_map, toks[2])
+                rset = toks[1]
+                start_k = 2
+            elseif ncodeunits(raw_line) >= 25
+                use_fixed_rhs = true
+                rset = _mps_fixed_field(raw_line, 5, 12)
+                start_k = 1
+            else
+                rset = toks[1]
+                start_k = 2
+            end
+            if isempty(rhs_name) && !isempty(rset)
+                rhs_name = String(rset)
+            end
+            if !isempty(rhs_name) && rset != rhs_name && !isempty(rset)
+                continue
+            end
+            if use_fixed_rhs
+                for (fa, fb, va, vb) in ((15, 22, 25, 36), (40, 47, 50, 61))
+                    rn = _mps_fixed_field(raw_line, fa, fb)
+                    vs = _mps_fixed_field(raw_line, va, vb)
+                    if !isempty(rn) && !isempty(vs)
+                        ridx = get(row_map, rn, -1)
+                        val = _mps_parse_float(vs)
                         if ridx == 0
                             obj_offset = val
                         elseif ridx > 0
                             rhs_vals[ridx] = val
                         end
-                        k += 2
                     end
                 end
-            elseif section === :RANGES
-                use_fixed_rng = false
-                if iseven(length(toks)) && haskey(row_map, String(toks[1]))
-                    rset = ""
-                    start_k = 1
-                elseif length(toks) >= 2 && haskey(row_map, String(toks[2]))
-                    rset = String(toks[1])
-                    start_k = 2
-                elseif ncodeunits(raw_line) >= 25
-                    use_fixed_rng = true
-                    rset = _mps_fixed_field(raw_line, 5, 12)
-                    start_k = 1
-                else
-                    rset = String(toks[1])
-                    start_k = 2
-                end
-                if isempty(range_name) && !isempty(rset)
-                    range_name = rset
-                end
-                if !isempty(range_name) && rset != range_name && !isempty(rset)
-                    continue
-                end
-                if use_fixed_rng
-                    for (fa, fb, va, vb) in ((15, 22, 25, 36), (40, 47, 50, 61))
-                        rn = _mps_fixed_field(raw_line, fa, fb)
-                        vs = _mps_fixed_field(raw_line, va, vb)
-                        if !isempty(rn) && !isempty(vs)
-                            ridx = get(row_map, rn, -1)
-                            if ridx > 0
-                                range_vals[ridx] = _mps_parse_float(vs)
-                                has_range[ridx] = true
-                            end
-                        end
+            else
+                k = start_k
+                ntoks = length(toks)
+                while k + 1 <= ntoks
+                    val = _mps_parse_float(toks[k + 1])
+                    ridx = get(row_map, toks[k], -1)
+                    if ridx == 0
+                        obj_offset = val
+                    elseif ridx > 0
+                        rhs_vals[ridx] = val
                     end
-                else
-                    k = start_k
-                    while k + 1 <= length(toks)
-                        rname = String(toks[k])
-                        val = _mps_parse_float(toks[k + 1])
-                        ridx = get(row_map, rname, -1)
+                    k += 2
+                end
+            end
+        elseif section === :RANGES
+            use_fixed_rng = false
+            if iseven(length(toks)) && haskey(row_map, toks[1])
+                rset = SubString(raw_line, 1, 0)
+                start_k = 1
+            elseif length(toks) >= 2 && haskey(row_map, toks[2])
+                rset = toks[1]
+                start_k = 2
+            elseif ncodeunits(raw_line) >= 25
+                use_fixed_rng = true
+                rset = _mps_fixed_field(raw_line, 5, 12)
+                start_k = 1
+            else
+                rset = toks[1]
+                start_k = 2
+            end
+            if isempty(range_name) && !isempty(rset)
+                range_name = String(rset)
+            end
+            if !isempty(range_name) && rset != range_name && !isempty(rset)
+                continue
+            end
+            if use_fixed_rng
+                for (fa, fb, va, vb) in ((15, 22, 25, 36), (40, 47, 50, 61))
+                    rn = _mps_fixed_field(raw_line, fa, fb)
+                    vs = _mps_fixed_field(raw_line, va, vb)
+                    if !isempty(rn) && !isempty(vs)
+                        ridx = get(row_map, rn, -1)
                         if ridx > 0
-                            range_vals[ridx] = val
+                            range_vals[ridx] = _mps_parse_float(vs)
                             has_range[ridx] = true
                         end
-                        k += 2
                     end
                 end
-            elseif section === :BOUNDS
-                length(toks) < 2 && continue
-                btype = uppercase(String(toks[1]))
-                # Bounds line: btype [bname] cname [val]
-                # For FR, MI, PL, BV: 2 tokens (blank bname) or 3 tokens (named bname)
-                # For LO, UP, FX, LI, UI: 3 tokens (blank bname) or 4 tokens (named bname)
-                bset = ""
-                cname = ""
-                bval = 0.0
-                if btype == "FR" || btype == "MI" || btype == "PL" || btype == "BV"
-                    if length(toks) == 2
-                        bset = ""
-                        cname = String(toks[2])
-                    else
-                        bset = String(toks[2])
-                        cname = String(toks[3])
+            else
+                k = start_k
+                ntoks = length(toks)
+                while k + 1 <= ntoks
+                    val = _mps_parse_float(toks[k + 1])
+                    ridx = get(row_map, toks[k], -1)
+                    if ridx > 0
+                        range_vals[ridx] = val
+                        has_range[ridx] = true
                     end
+                    k += 2
+                end
+            end
+        elseif section === :BOUNDS
+            length(toks) < 2 && continue
+            btype = _mps_norm_btype(toks[1])
+            # Bounds line: btype [bname] cname [val]
+            # For FR, MI, PL, BV: 2 tokens (blank bname) or 3 tokens (named bname)
+            # For LO, UP, FX, LI, UI: 3 tokens (blank bname) or 4 tokens (named bname)
+            bset = SubString(raw_line, 1, 0)
+            cname_sub = SubString(raw_line, 1, 0)
+            bval = 0.0
+            if btype === :FR || btype === :MI || btype === :PL || btype === :BV
+                if length(toks) == 2
+                    cname_sub = toks[2]
                 else
-                    if length(toks) == 3
-                        bset = ""
-                        cname = String(toks[2])
-                        bval = _mps_parse_float(toks[3])
-                    elseif length(toks) >= 4
-                        bset = String(toks[2])
-                        cname = String(toks[3])
-                        bval = _mps_parse_float(toks[4])
-                    else
-                        continue
-                    end
+                    bset = toks[2]
+                    cname_sub = toks[3]
                 end
-                cidx = get(col_map, cname, 0)
-                if cidx == 0 && ncodeunits(raw_line) >= 15
-                    # Fixed-format fallback for column names with embedded spaces
-                    bset_f = _mps_fixed_field(raw_line, 5, 12)
-                    cname_f = _mps_fixed_field(raw_line, 15, 22)
-                    cidx = get(col_map, cname_f, 0)
-                    if cidx > 0
-                        bset = bset_f
-                        cname = cname_f
-                        v_f = _mps_fixed_field(raw_line, 25, 36)
-                        if !isempty(v_f)
-                            bval = _mps_parse_float(v_f)
-                        end
-                    end
-                end
-                if isempty(bound_name) && !isempty(bset)
-                    bound_name = bset
-                end
-                if !isempty(bound_name) && bset != bound_name && !isempty(bset)
+            else
+                if length(toks) == 3
+                    cname_sub = toks[2]
+                    bval = _mps_parse_float(toks[3])
+                elseif length(toks) >= 4
+                    bset = toks[2]
+                    cname_sub = toks[3]
+                    bval = _mps_parse_float(toks[4])
+                else
                     continue
                 end
-                cidx == 0 && continue
-                if btype == "LO" || btype == "LI"
-                    col_lo[cidx] = bval
-                    col_has_lo[cidx] = true
-                    if col_hi[cidx] < bval && !col_has_hi[cidx]
-                        col_hi[cidx] = _MPS_INF
+            end
+            cidx = get(col_map, cname_sub, 0)
+            if cidx == 0 && ncodeunits(raw_line) >= 15
+                # Fixed-format fallback for column names with embedded spaces
+                bset_f = _mps_fixed_field(raw_line, 5, 12)
+                cname_f = _mps_fixed_field(raw_line, 15, 22)
+                cidx = get(col_map, cname_f, 0)
+                if cidx > 0
+                    bset = bset_f
+                    v_f = _mps_fixed_field(raw_line, 25, 36)
+                    if !isempty(v_f)
+                        bval = _mps_parse_float(v_f)
                     end
-                elseif btype == "UP" || btype == "UI"
-                    col_hi[cidx] = bval
-                    col_has_hi[cidx] = true
-                    if !col_has_lo[cidx] && bval < 0.0
-                        col_lo[cidx] = -_MPS_INF
-                    end
-                elseif btype == "FX"
-                    col_lo[cidx] = bval
-                    col_hi[cidx] = bval
-                    col_has_lo[cidx] = true
-                    col_has_hi[cidx] = true
-                elseif btype == "FR"
-                    col_lo[cidx] = -_MPS_INF
-                    col_hi[cidx] = _MPS_INF
-                    col_has_lo[cidx] = true
-                    col_has_hi[cidx] = true
-                elseif btype == "MI"
-                    col_lo[cidx] = -_MPS_INF
-                    col_has_lo[cidx] = true
-                    if !col_has_hi[cidx]
-                        col_hi[cidx] = 0.0
-                    end
-                elseif btype == "PL"
-                    col_hi[cidx] = _MPS_INF
-                    col_has_hi[cidx] = true
-                elseif btype == "BV"
-                    col_lo[cidx] = 0.0
-                    col_hi[cidx] = 1.0
-                    col_has_lo[cidx] = true
-                    col_has_hi[cidx] = true
                 end
+            end
+            if isempty(bound_name) && !isempty(bset)
+                bound_name = String(bset)
+            end
+            if !isempty(bound_name) && bset != bound_name && !isempty(bset)
+                continue
+            end
+            cidx == 0 && continue
+            if btype === :LO || btype === :LI
+                col_lo[cidx] = bval
+                col_has_lo[cidx] = true
+                if col_hi[cidx] < bval && !col_has_hi[cidx]
+                    col_hi[cidx] = _MPS_INF
+                end
+            elseif btype === :UP || btype === :UI
+                col_hi[cidx] = bval
+                col_has_hi[cidx] = true
+                if !col_has_lo[cidx] && bval < 0.0
+                    col_lo[cidx] = -_MPS_INF
+                end
+            elseif btype === :FX
+                col_lo[cidx] = bval
+                col_hi[cidx] = bval
+                col_has_lo[cidx] = true
+                col_has_hi[cidx] = true
+            elseif btype === :FR
+                col_lo[cidx] = -_MPS_INF
+                col_hi[cidx] = _MPS_INF
+                col_has_lo[cidx] = true
+                col_has_hi[cidx] = true
+            elseif btype === :MI
+                col_lo[cidx] = -_MPS_INF
+                col_has_lo[cidx] = true
+                if !col_has_hi[cidx]
+                    col_hi[cidx] = 0.0
+                end
+            elseif btype === :PL
+                col_hi[cidx] = _MPS_INF
+                col_has_hi[cidx] = true
+            elseif btype === :BV
+                col_lo[cidx] = 0.0
+                col_hi[cidx] = 1.0
+                col_has_lo[cidx] = true
+                col_has_hi[cidx] = true
             end
         end
     end
-    if endswith(lowercase(path), ".gz")
-        open(`gzip -dc $path`, "r") do io
-            _parse_io(io)
-        end
-    else
-        open(path, "r") do io
-            _parse_io(io)
-        end
-    end
 
-    _finalize_rows!()
-    _finalize_cols!()
+    rows_finalized = _mps_finalize_rows!(rows_finalized, row_types, rhs_vals, range_vals, has_range)
+    cols_finalized = _mps_finalize_cols!(cols_finalized, obj_vec, col_is_int, col_lo, col_hi, col_has_lo, col_has_hi)
 
     nrows = length(row_types)
     ncols = length(obj_vec)
@@ -492,36 +512,52 @@ function clp_read_mps(path::AbstractString)
         end
     end
 
-    # Assemble 1-based CSC arrays (merging any duplicate row indices in a column)
+    # Assemble 1-based CSC arrays via linear counting sort (merging duplicate row indices in a column)
     col_starts = Vector{Int32}(undef, ncols + 1)
-    nnz_total = 0
-    for j in 1:ncols
-        nnz_total += length(col_rows[j])
+    pos_i32 = Int32(1)
+    @inbounds for j in 1:ncols
+        col_starts[j] = pos_i32
+        pos_i32 += col_counts[j]
+        col_counts[j] = col_starts[j]
     end
+    col_starts[ncols + 1] = pos_i32
+
+    nnz_total = length(trip_col)
     col_indices = Vector{Int32}(undef, nnz_total)
     col_elements = Vector{Float64}(undef, nnz_total)
-    pos = 1
+    @inbounds for t in 1:nnz_total
+        c = Int(trip_col[t])
+        p = Int(col_counts[c])
+        col_counts[c] = Int32(p + 1)
+        col_indices[p] = trip_row[t]
+        col_elements[p] = trip_val[t]
+    end
+
+    out_pos = 1
     row_seen = zeros(Int32, nrows)
+    next_raw_start = Int(col_starts[1])
     @inbounds for j in 1:ncols
-        col_starts[j] = Int32(pos)
-        rj = col_rows[j]
-        vj = col_vals[j]
-        col_start = pos
-        for k in 1:length(rj)
-            ir = Int(rj[k])
+        raw_start = next_raw_start
+        next_raw_start = Int(col_starts[j + 1])
+        raw_end = next_raw_start - 1
+        col_out_start = out_pos
+        col_starts[j] = Int32(col_out_start)
+        for k in raw_start:raw_end
+            ir = Int(col_indices[k])
+            v = col_elements[k]
             prev = Int(row_seen[ir])
-            if prev >= col_start
-                col_elements[prev] += vj[k]
+            if prev >= col_out_start
+                col_elements[prev] += v
             else
-                row_seen[ir] = Int32(pos)
-                col_indices[pos] = Int32(ir)
-                col_elements[pos] = vj[k]
-                pos += 1
+                row_seen[ir] = Int32(out_pos)
+                col_indices[out_pos] = Int32(ir)
+                col_elements[out_pos] = v
+                out_pos += 1
             end
         end
         # Compact any exact zeros produced by merging duplicates
-        write_pos = col_start
-        for p in col_start:(pos - 1)
+        write_pos = col_out_start
+        for p in col_out_start:(out_pos - 1)
             row_seen[Int(col_indices[p])] = Int32(0)
             if col_elements[p] != 0.0
                 if write_pos != p
@@ -531,11 +567,11 @@ function clp_read_mps(path::AbstractString)
                 write_pos += 1
             end
         end
-        pos = write_pos
+        out_pos = write_pos
     end
-    col_starts[ncols + 1] = Int32(pos)
-    resize!(col_indices, pos - 1)
-    resize!(col_elements, pos - 1)
+    col_starts[ncols + 1] = Int32(out_pos)
+    resize!(col_indices, out_pos - 1)
+    resize!(col_elements, out_pos - 1)
 
     return (
         name = prob_name,
@@ -552,4 +588,24 @@ function clp_read_mps(path::AbstractString)
         obj_offset = obj_offset,
         obj_sense = obj_sense,
     )
+end
+
+"""
+    clp_read_mps(path::AbstractString) -> NamedTuple
+
+Read an LP in MPS format (fixed or free) into 1-based CSC representation:
+`(name, nrows, ncols, col_starts, col_indices, col_elements,
+  col_lower, col_upper, objective, row_lower, row_upper,
+  obj_offset, obj_sense)`.
+"""
+function clp_read_mps(path::AbstractString)
+    if endswith(lowercase(path), ".gz")
+        return open(`gzip -dc $path`, "r") do io
+            _clp_read_mps_io(io)
+        end
+    else
+        return open(path, "r") do io
+            _clp_read_mps_io(io)
+        end
+    end
 end
