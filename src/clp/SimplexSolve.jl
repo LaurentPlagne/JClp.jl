@@ -421,7 +421,7 @@ function dual!(
         m.drs_infeas_nnz = drs_inf_nnz
         m.alpha_accuracy = alpha_acc
         m.objective_value = obj_val
-        m.acceptable_pivot = acc_piv
+        m.acceptable_pivot = abs(acc_piv)
         m.rng_seed = rng_seed
 
         if dl_exit == CLP_DL_EXIT_HIT_MAX || m.number_iterations >= m.max_iterations
@@ -468,15 +468,37 @@ function dual!(
     # If dual exited with primal-feasible (or fake-bounded) basis needing primal cleanup,
     # reset any nonbasic variable sitting on an infinite bound before delete_rim!/primal!
     need_primal_cleanup = (m.problem_status == -1 && m.num_primal_infeas == 0 && m.num_dual_infeas > 0)
+    if number_fake > 0
+        rs_opt = m.has_scale ? m.row_scale : nothing
+        ics_opt = m.has_scale ? m.inv_col_scale : nothing
+        clp_create_rim1!(
+            m.lower, m.upper, m.col_lower, m.col_upper, m.row_lower, m.row_upper,
+            rs_opt, ics_opt, nrows, 0, ncols, nrows, ncols, m.special_options, false,
+            m.rhs_scale, m.primal_tol,
+        )
+    end
+    @inbounds for seq in 1:ntotal
+        m.status[seq] &= ~UInt8(24)
+    end
     if need_primal_cleanup
         @inbounds for seq in 1:ntotal
             st = _sb_get_status(m.status[seq])
-            lo_orig = seq <= ncols ? m.col_lower[seq] : m.row_lower[seq - ncols]
-            hi_orig = seq <= ncols ? m.col_upper[seq] : m.row_upper[seq - ncols]
-            if st == CLP_STATUS_AT_UPPER && hi_orig >= 1.0e20
-                m.status[seq] = _sb_set_status(m.status[seq], lo_orig > -1.0e20 ? CLP_STATUS_AT_LOWER : CLP_STATUS_IS_FREE)
-            elseif st == CLP_STATUS_AT_LOWER && lo_orig <= -1.0e20
-                m.status[seq] = _sb_set_status(m.status[seq], hi_orig < 1.0e20 ? CLP_STATUS_AT_UPPER : CLP_STATUS_IS_FREE)
+            if st == CLP_STATUS_AT_UPPER && m.upper[seq] >= 1.0e20
+                if m.lower[seq] > -1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_LOWER)
+                    m.solution[seq] = m.lower[seq]
+                else
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
+                    m.solution[seq] = 0.0
+                end
+            elseif st == CLP_STATUS_AT_LOWER && m.lower[seq] <= -1.0e20
+                if m.upper[seq] < 1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_UPPER)
+                    m.solution[seq] = m.upper[seq]
+                else
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
+                    m.solution[seq] = 0.0
+                end
             end
         end
     end
@@ -901,7 +923,11 @@ function primal!(
         end
     end
 
+    recompute_duals = (m.nlc_num_infeas > 0 || m.problem_status != CLP_STATUS_OPTIMAL)
     _sm_nlc_restore_all!(m)
+    if recompute_duals && m.cf.lu.nrows > 0 && m.cf.lu.status == 0
+        compute_duals!(m)
+    end
     delete_rim!(m)
     return m.problem_status
 end

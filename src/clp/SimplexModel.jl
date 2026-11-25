@@ -590,63 +590,59 @@ function create_rim!(m::ClpSimplexModel)::Nothing
         m.obj_sense * m.obj_scale,
     )
 
-    # Populate working solution from unscaled activities (clamped to bounds for nonbasic)
-    @inbounds for j in 1:ncols
-        st = _sb_get_status(m.status[j])
-        if st == CLP_STATUS_AT_LOWER || st == CLP_STATUS_IS_FIXED
-            m.solution[j] = m.lower[j]
-        elseif st == CLP_STATUS_AT_UPPER
-            m.solution[j] = m.upper[j]
-        elseif st == CLP_STATUS_IS_FREE
-            v = m.has_scale ? (m.col_activity[j] * (m.rhs_scale * m.inv_col_scale[j])) : (m.col_activity[j] * m.rhs_scale)
-            m.solution[j] = isfinite(v) ? v : 0.0
-        else
-            m.solution[j] = m.has_scale ? (m.col_activity[j] * (m.rhs_scale * m.inv_col_scale[j])) : (m.col_activity[j] * m.rhs_scale)
-        end
-    end
-    @inbounds for i in 1:nrows
-        seq = ncols + i
-        st = _sb_get_status(m.status[seq])
-        if st == CLP_STATUS_AT_LOWER || st == CLP_STATUS_IS_FIXED
-            m.solution[seq] = m.lower[seq]
-        elseif st == CLP_STATUS_AT_UPPER
-            m.solution[seq] = m.upper[seq]
-        elseif st == CLP_STATUS_IS_FREE
-            v = m.has_scale ? (m.row_activity[i] * (m.rhs_scale * m.row_scale[i])) : (m.row_activity[i] * m.rhs_scale)
-            m.solution[seq] = isfinite(v) ? v : 0.0
-        else
-            m.solution[seq] = m.has_scale ? (m.row_activity[i] * (m.rhs_scale * m.row_scale[i])) : (m.row_activity[i] * m.rhs_scale)
-        end
+    # Clear any stale fake-bound and flagged bits before sanitizing statuses
+    @inbounds for seq in 1:ntotal
+        m.status[seq] &= ~(UInt8(24) | CLP_STATUS_FLAGGED_BIT)
     end
 
-    # Clean status & rebuild pivot_var from basic variables
+    # Sanitize ALL statuses BEFORE setting m.solution[seq], and rebuild pivot_var
     nbasic = 0
     @inbounds for seq in 1:ntotal
         st = _sb_get_status(m.status[seq])
+        lo = m.lower[seq]
+        hi = m.upper[seq]
         if st == CLP_STATUS_BASIC
             if nbasic < nrows
                 nbasic += 1
                 m.pivot_var[nbasic] = Int32(seq)
             else
                 # Extra basic -> push to bound
-                lo = m.lower[seq]
-                hi = m.upper[seq]
                 if lo == hi
                     m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FIXED)
-                    m.solution[seq] = lo
+                elseif lo > -1.0e20 && hi < 1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], abs(lo) <= abs(hi) ? CLP_STATUS_AT_LOWER : CLP_STATUS_AT_UPPER)
                 elseif lo > -1.0e20
                     m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_LOWER)
-                    m.solution[seq] = lo
                 elseif hi < 1.0e20
                     m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_UPPER)
-                    m.solution[seq] = hi
                 else
                     m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
-                    m.solution[seq] = 0.0
                 end
             end
-        elseif (st == CLP_STATUS_AT_LOWER || st == CLP_STATUS_AT_UPPER) && m.lower[seq] == m.upper[seq]
-            m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FIXED)
+        else
+            if lo == hi
+                m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FIXED)
+            elseif st == CLP_STATUS_IS_FIXED
+                if lo > -1.0e20 && hi < 1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], abs(lo) <= abs(hi) ? CLP_STATUS_AT_LOWER : CLP_STATUS_AT_UPPER)
+                elseif lo > -1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_LOWER)
+                elseif hi < 1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_UPPER)
+                else
+                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
+                end
+            elseif st == CLP_STATUS_AT_LOWER && lo <= -1.0e20
+                m.status[seq] = _sb_set_status(m.status[seq], hi < 1.0e20 ? CLP_STATUS_AT_UPPER : CLP_STATUS_IS_FREE)
+            elseif st == CLP_STATUS_AT_UPPER && hi >= 1.0e20
+                m.status[seq] = _sb_set_status(m.status[seq], lo > -1.0e20 ? CLP_STATUS_AT_LOWER : CLP_STATUS_IS_FREE)
+            elseif (st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC) && (lo > -1.0e20 || hi < 1.0e20)
+                if lo > -1.0e20 && hi < 1.0e20
+                    m.status[seq] = _sb_set_status(m.status[seq], abs(lo) <= abs(hi) ? CLP_STATUS_AT_LOWER : CLP_STATUS_AT_UPPER)
+                else
+                    m.status[seq] = _sb_set_status(m.status[seq], lo > -1.0e20 ? CLP_STATUS_AT_LOWER : CLP_STATUS_AT_UPPER)
+                end
+            end
         end
     end
     if nbasic < nrows
@@ -659,6 +655,39 @@ function create_rim!(m::ClpSimplexModel)::Nothing
                 m.pivot_var[nbasic] = Int32(seq)
                 nbasic == nrows && break
             end
+        end
+    end
+
+    # Populate working solution from sanitized statuses & unscaled activities
+    @inbounds for j in 1:ncols
+        st = _sb_get_status(m.status[j])
+        if st == CLP_STATUS_AT_LOWER || st == CLP_STATUS_IS_FIXED
+            m.solution[j] = m.lower[j]
+        elseif st == CLP_STATUS_AT_UPPER
+            m.solution[j] = m.upper[j]
+        elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+            v = m.has_scale ? (m.col_activity[j] * (m.rhs_scale * m.inv_col_scale[j])) : (m.col_activity[j] * m.rhs_scale)
+            v = isfinite(v) ? v : 0.0
+            m.solution[j] = clamp(v, m.lower[j], m.upper[j])
+        else
+            v = m.has_scale ? (m.col_activity[j] * (m.rhs_scale * m.inv_col_scale[j])) : (m.col_activity[j] * m.rhs_scale)
+            m.solution[j] = isfinite(v) ? v : 0.0
+        end
+    end
+    @inbounds for i in 1:nrows
+        seq = ncols + i
+        st = _sb_get_status(m.status[seq])
+        if st == CLP_STATUS_AT_LOWER || st == CLP_STATUS_IS_FIXED
+            m.solution[seq] = m.lower[seq]
+        elseif st == CLP_STATUS_AT_UPPER
+            m.solution[seq] = m.upper[seq]
+        elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
+            v = m.has_scale ? (m.row_activity[i] * (m.rhs_scale * m.row_scale[i])) : (m.row_activity[i] * m.rhs_scale)
+            v = isfinite(v) ? v : 0.0
+            m.solution[seq] = clamp(v, m.lower[seq], m.upper[seq])
+        else
+            v = m.has_scale ? (m.row_activity[i] * (m.rhs_scale * m.row_scale[i])) : (m.row_activity[i] * m.rhs_scale)
+            m.solution[seq] = isfinite(v) ? v : 0.0
         end
     end
 
