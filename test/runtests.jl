@@ -18,4 +18,6 @@ using Test
     include("test_b12c1_simplex_model.jl")
     include("test_b12c2_simplex_solve.jl")
     include("test_b13_presolve.jl")
+    include("test_b14_kkt_warmstart_fuzz.jl")
+    include("test_b15_moi.jl")
 end

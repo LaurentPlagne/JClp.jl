@@ -164,6 +164,23 @@ function _sm_drs_init_weights!(m::ClpSimplexModel, exact::Bool)::Nothing
     return nothing
 end
 
+@inline function _sm_bound_pair_feasible(lo::Float64, hi::Float64, tol::Float64)::Bool
+    (isnan(lo) || isnan(hi) || lo == Inf || hi == -Inf) && return false
+    (lo == -Inf || hi == Inf) && return true
+    return lo <= hi + tol * max(1.0, abs(lo), abs(hi))
+end
+
+function _sm_bounds_feasible(m::ClpSimplexModel)::Bool
+    tol = m.primal_tol
+    @inbounds for j in 1:m.ncols
+        _sm_bound_pair_feasible(m.col_lower[j], m.col_upper[j], tol) || return false
+    end
+    @inbounds for i in 1:m.nrows
+        _sm_bound_pair_feasible(m.row_lower[i], m.row_upper[i], tol) || return false
+    end
+    return true
+end
+
 """
     dual!(m::ClpSimplexModel; max_iterations=m.max_iterations, warm_start=false,
           scaling=m.scaling_flag, exact_weights=false) -> Int
@@ -183,26 +200,54 @@ function dual!(
     ncols = m.ncols
     ntotal = nrows + ncols
 
+    if !_sm_bounds_feasible(m)
+        m.number_iterations = 0
+        m.problem_status = CLP_STATUS_PRIMAL_INFEAS
+        m.secondary_status = 0
+        fill!(m.dual_row_sol, 0.0)
+        fill!(m.reduced_cost, 0.0)
+        return m.problem_status
+    end
+
     if nrows == 0
         # Trivial unconstrained / box LP
+        m.number_iterations = 0
         m.problem_status = CLP_STATUS_OPTIMAL
+        m.secondary_status = 0
         obj = -m.obj_offset
         @inbounds for j in 1:ncols
+            lo = m.col_lower[j]
+            hi = m.col_upper[j]
             c = m.objective[j] * m.obj_sense
-            if c > 0.0
-                if m.col_lower[j] <= -1.0e20
+            m.reduced_cost[j] = m.objective[j]
+            if lo > -1.0e20 && hi < 1.0e20 && abs(hi - lo) <= m.primal_tol * max(1.0, abs(lo), abs(hi))
+                m.col_activity[j] = 0.5 * (lo + hi)
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+            elseif c > 0.0
+                if lo <= -1.0e20
                     m.problem_status = CLP_STATUS_DUAL_INFEAS
                     return m.problem_status
                 end
-                m.col_activity[j] = m.col_lower[j]
+                m.col_activity[j] = lo
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
             elseif c < 0.0
-                if m.col_upper[j] >= 1.0e20
+                if hi >= 1.0e20
                     m.problem_status = CLP_STATUS_DUAL_INFEAS
                     return m.problem_status
                 end
-                m.col_activity[j] = m.col_upper[j]
+                m.col_activity[j] = hi
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_UPPER)
             else
-                m.col_activity[j] = clamp(0.0, m.col_lower[j], m.col_upper[j])
+                if lo > -1.0e20
+                    m.col_activity[j] = lo
+                    m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
+                elseif hi < 1.0e20
+                    m.col_activity[j] = hi
+                    m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_UPPER)
+                else
+                    m.col_activity[j] = 0.0
+                    m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FREE)
+                end
             end
             obj += m.objective[j] * m.col_activity[j]
         end
@@ -270,6 +315,8 @@ function dual!(
     outer_iters = 0
     max_outer = min(2000, max(200, max_iterations))
     infeas_confirm = 0
+    fake_bumps = 0
+    force_primal_cleanup = false
 
     while outer_iters < max_outer
         outer_iters += 1
@@ -352,9 +399,14 @@ function dual!(
                 elseif m.num_dual_infeas > 0 && m.num_primal_infeas == 0
                     # Primal feasible & dual infeasible -> finish with primal simplex!
                     break
-                else
+                elseif fake_bumps < 2 && dual_bound < 1.0e15
+                    fake_bumps += 1
                     dual_bound = min(1.0e15, dual_bound * 100.0)
                     continue
+                else
+                    # Fake bounds repeatedly blocked optimality / left primal infeasibility -> finish with primal!
+                    force_primal_cleanup = true
+                    break
                 end
             elseif m.num_dual_infeas == 0
                 m.problem_status = CLP_STATUS_OPTIMAL
@@ -454,6 +506,14 @@ function dual!(
         elseif dl_exit == CLP_DL_EXIT_PIVOT_ROW_NEG
             infeas_confirm = 0
             _sm_clear_flags!(m.status)
+            if m.drs_infeas_nnz == 0 && m.num_primal_infeas > 0 && m.cf.lu.npivots == 0
+                if number_fake > 0
+                    force_primal_cleanup = true
+                else
+                    m.problem_status = CLP_STATUS_PRIMAL_INFEAS
+                end
+                break
+            end
             # Loop back to refactorize and verify optimality / restore fake bounds
         elseif dl_exit == CLP_DL_EXIT_FALLBACK_ITER
             infeas_confirm = 0
@@ -467,7 +527,10 @@ function dual!(
 
     # If dual exited with primal-feasible (or fake-bounded) basis needing primal cleanup,
     # reset any nonbasic variable sitting on an infinite bound before delete_rim!/primal!
-    need_primal_cleanup = (m.problem_status == -1 && m.num_primal_infeas == 0 && m.num_dual_infeas > 0)
+    need_primal_cleanup = force_primal_cleanup || (m.problem_status == -1 && m.num_primal_infeas == 0 && m.num_dual_infeas > 0)
+    if !need_primal_cleanup && m.problem_status < 0
+        m.problem_status = CLP_STATUS_MAX_ITERATIONS
+    end
     if number_fake > 0
         rs_opt = m.has_scale ? m.row_scale : nothing
         ics_opt = m.has_scale ? m.inv_col_scale : nothing
@@ -682,6 +745,15 @@ function primal!(
     ncols = m.ncols
     ntotal = nrows + ncols
 
+    if !_sm_bounds_feasible(m)
+        m.number_iterations = 0
+        m.problem_status = CLP_STATUS_PRIMAL_INFEAS
+        m.secondary_status = 0
+        fill!(m.dual_row_sol, 0.0)
+        fill!(m.reduced_cost, 0.0)
+        return m.problem_status
+    end
+
     if nrows == 0
         return dual!(m; max_iterations = max_iterations, warm_start = warm_start, scaling = scaling)
     end
@@ -733,6 +805,8 @@ function primal!(
     max_outer = min(2000, max(200, max_iterations))
     infeas_bumps = 0
     unbounded_confirm = 0
+    stalled_unf = 0
+    last_unf_iter = -1
 
     while outer_iters < max_outer
         outer_iters += 1
@@ -755,7 +829,34 @@ function primal!(
         if m.pcs_infeas_nnz == 0 || m.num_dual_infeas == 0
             n_unf = _sm_clear_flags!(m.status)
             if n_unf > 0
+                if m.number_iterations == last_unf_iter
+                    stalled_unf += 1
+                else
+                    stalled_unf = 1
+                    last_unf_iter = m.number_iterations
+                end
+                if stalled_unf >= 2
+                    if m.nlc_num_infeas > 0
+                        if infeas_bumps < 2 && m.nlc_infeas_weight < 1.0e13
+                            infeas_bumps += 1
+                            m.nlc_infeas_weight *= 100.0
+                            stalled_unf = 0
+                            continue
+                        else
+                            m.problem_status = CLP_STATUS_PRIMAL_INFEAS
+                            break
+                        end
+                    elseif m.num_primal_infeas > 0
+                        m.problem_status = CLP_STATUS_PRIMAL_INFEAS
+                        break
+                    elseif unbounded_confirm >= 1
+                        m.problem_status = CLP_STATUS_DUAL_INFEAS
+                        break
+                    end
+                end
                 _sm_pcs_refresh_infeas!(m)
+            else
+                stalled_unf = 0
             end
             if m.pcs_infeas_nnz == 0
                 if m.nlc_num_infeas == 0 && m.num_primal_infeas == 0
@@ -771,7 +872,7 @@ function primal!(
                         break
                     end
                 else
-                    m.problem_status = CLP_STATUS_OPTIMAL
+                    m.problem_status = CLP_STATUS_PRIMAL_INFEAS
                     break
                 end
             end

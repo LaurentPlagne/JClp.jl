@@ -2,9 +2,15 @@
 
 julia_version = "1.13.2"
 manifest_format = "2.1"
-project_hash = "4492bc81ef5e28459684bf09ebdbc8d475d1067c"
+project_hash = "7adce597ece0c36693700b206bdcb4a879f4e6b4"
 
 [[deps.JClp]]
 path = "."
 uuid = "42859c3e-f634-4e60-ba07-ac3804ac16e3"
 version = "0.1.0"
+
+    [deps.JClp.extensions]
+    JClpMOIExt = "MathOptInterface"
+
+    [deps.JClp.weakdeps]
+    MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"

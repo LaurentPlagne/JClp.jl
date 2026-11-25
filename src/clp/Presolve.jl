@@ -13,6 +13,7 @@ const _PS_ACT_COL_SINGLETON   = Int8(4)  # eq row i, col j singleton: a*x_j + su
 const _PS_ACT_SLACK_SINGLETON = Int8(5)  # ineq row i, zero-cost col j singleton: rlo <= a*x_j + sum(row_i) <= rhi
 const _PS_ACT_ROW_SINGLETON   = Int8(6)  # row singleton: rlo <= a*x_j <= rhi
 const _PS_ACT_SUBST           = Int8(7)  # multi-row implied-free col j (col_len == 2): eq r_piv -> r_other
+const _PS_ACT_FORCING_ROW     = Int8(8)  # forcing row i forces cols to bounds; dual y_i fixes worst dual infeas
 
 struct _PresolveAction
     kind::Int8
@@ -281,7 +282,7 @@ function _pw_pass_fixed_and_empty_cols!(pw::_PresolveWork)::Tuple{Int,Int}
                 _pw_fix_col!(pw, j, hi)
                 n_red += 1
             else
-                v = clamp(0.0, lo, hi)
+                v = lo > -_PS_INF ? lo : (hi < _PS_INF ? hi : 0.0)
                 _pw_fix_col!(pw, j, v)
                 n_red += 1
             end
@@ -401,32 +402,31 @@ function _pw_pass_forcing_and_redundant!(pw::_PresolveWork)::Tuple{Int,Int}
             continue
         end
 
-        # Forcing row at upper bound (min_act == rhi)
-        if n_inf_min == 0 && rhi < _PS_INF && abs(min_act - rhi) <= 1.0e-10 * (1.0 + abs(rhi))
-            cols_copy = copy(rc)
-            vals_copy = copy(rv)
-            _pw_remove_row!(pw, i)
-            n_red += 1
-            for k in 1:length(cols_copy)
-                j = Int(cols_copy[k])
+        # Forcing row at upper bound (min_act == rhi) or lower bound (max_act == rlo)
+        tight_at_rhi = (n_inf_min == 0 && rhi < _PS_INF && abs(min_act - rhi) <= 1.0e-10 * (1.0 + abs(rhi)))
+        tight_at_rlo = !tight_at_rhi && (n_inf_max == 0 && rlo > -_PS_INF && abs(max_act - rlo) <= 1.0e-10 * (1.0 + abs(rlo)))
+        if tight_at_rhi || tight_at_rlo
+            aux_start = length(pw.aux_cols) + 1
+            for k in 1:length(rc)
+                j = Int(rc[k])
                 pw.col_active[j] || continue
-                fval = vals_copy[k] > 0.0 ? pw.col_lo[j] : pw.col_hi[j]
-                _pw_fix_col!(pw, j, fval)
-                n_red += 1
+                push!(pw.aux_cols, Int32(j))
+                push!(pw.aux_vals, rv[k])
             end
-            continue
-        end
-
-        # Forcing row at lower bound (max_act == rlo)
-        if n_inf_max == 0 && rlo > -_PS_INF && abs(max_act - rlo) <= 1.0e-10 * (1.0 + abs(rlo))
+            aux_len = length(pw.aux_cols) - aux_start + 1
             cols_copy = copy(rc)
             vals_copy = copy(rv)
-            _pw_remove_row!(pw, i)
+            _pw_remove_row!(pw, i; record = false)
+            push!(pw.actions, _PresolveAction(
+                _PS_ACT_FORCING_ROW, Int32(i), Int32(0), Int32(0),
+                tight_at_rlo ? 1.0 : -1.0, rlo, rhi, 0.0, 0.0, 0.0,
+                Int32(aux_start), Int32(aux_len),
+            ))
             n_red += 1
             for k in 1:length(cols_copy)
                 j = Int(cols_copy[k])
                 pw.col_active[j] || continue
-                fval = vals_copy[k] > 0.0 ? pw.col_hi[j] : pw.col_lo[j]
+                fval = (tight_at_rlo == (vals_copy[k] > 0.0)) ? pw.col_hi[j] : pw.col_lo[j]
                 _pw_fix_col!(pw, j, fval)
                 n_red += 1
             end
@@ -850,8 +850,8 @@ function _pw_pass_doubletons!(pw::_PresolveWork)::Tuple{Int,Int}
             nlo2 = lo1 > -_PS_INF ? (rhs / a2 - s_a1 * lo1) : -floatmax(Float64)
             nhi2 = hi1 < _PS_INF ? (rhs / a2 - s_a1 * hi1) : floatmax(Float64)
         end
-        tight_lo2 = (nlo2 > -_PS_INF && (old_lo2 <= -_PS_INF || nlo2 >= old_lo2 - 1.0e-7 * max(1.0, abs(old_lo2)))) ? nlo2 : NaN
-        tight_hi2 = (nhi2 < _PS_INF && (old_hi2 >= _PS_INF || nhi2 <= old_hi2 + 1.0e-7 * max(1.0, abs(old_hi2)))) ? nhi2 : NaN
+        tight_lo2 = (nlo2 > -_PS_INF && (old_lo2 <= -_PS_INF || nlo2 > old_lo2 + 1.0e-9 * max(1.0, abs(old_lo2)))) ? nlo2 : NaN
+        tight_hi2 = (nhi2 < _PS_INF && (old_hi2 >= _PS_INF || nhi2 < old_hi2 - 1.0e-9 * max(1.0, abs(old_hi2)))) ? nhi2 : NaN
         if nlo2 > pw.col_lo[j2]; pw.col_lo[j2] = nlo2; end
         if nhi2 < pw.col_hi[j2]; pw.col_hi[j2] = nhi2; end
         if pw.col_lo[j2] > pw.col_hi[j2] + tol * max(1.0, abs(pw.col_lo[j2]))
@@ -1061,8 +1061,6 @@ function presolve(m::ClpSimplexModel; max_passes::Int = 15)::_PresolvedProblem
         st != 0 && (status = st; break)
         n3, st = _pw_pass_forcing_and_redundant!(pw); tot += n3
         st != 0 && (status = st; break)
-        n4, st = _pw_pass_bound_tightening!(pw); tot += n4
-        st != 0 && (status = st; break)
         n5, st = _pw_pass_col_singletons!(pw); tot += n5
         st != 0 && (status = st; break)
         n6, st = _pw_pass_slack_singletons!(pw); tot += n6
@@ -1228,6 +1226,57 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
             i = Int(act.row)
             m.status[ncols + i] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
             m.dual_row_sol[i] = 0.0
+        elseif act.kind == _PS_ACT_FORCING_ROW
+            i = Int(act.row)
+            tight_at_rlo = (act.val1 > 0.0)
+            rlo = act.val2
+            rhi = act.val3
+            a0 = Int(act.aux_start)
+            al = Int(act.aux_len)
+
+            j_piv = 0
+            best_y_min = 0.0
+            for p in a0:(a0 + al - 1)
+                j = Int(ps.aux_cols[p])
+                a = ps.aux_vals[p]
+                abs(a) <= 1.0e-13 && continue
+                forced_to_hi = (tight_at_rlo == (a > 0.0))
+                if abs(m.col_upper[j] - m.col_lower[j]) <= 1.0e-9
+                    m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+                    continue
+                end
+                m.status[j] = _sb_set_status(UInt8(0), forced_to_hi ? CLP_STATUS_AT_UPPER : CLP_STATUS_AT_LOWER)
+                cand_y_min = (obj_s * m.reduced_cost[j]) / a
+                if tight_at_rlo
+                    if cand_y_min > best_y_min + 1.0e-12
+                        best_y_min = cand_y_min
+                        j_piv = j
+                    end
+                else
+                    if cand_y_min < best_y_min - 1.0e-12
+                        best_y_min = cand_y_min
+                        j_piv = j
+                    end
+                end
+            end
+
+            if j_piv != 0
+                y_i = obj_s * best_y_min
+                m.dual_row_sol[i] = y_i
+                for p in a0:(a0 + al - 1)
+                    j = Int(ps.aux_cols[p])
+                    a = ps.aux_vals[p]
+                    m.reduced_cost[j] -= a * y_i
+                end
+                m.reduced_cost[j_piv] = 0.0
+                was_fixed[j_piv] = false
+                m.status[j_piv] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+                r_act = tight_at_rlo ? rlo : rhi
+                m.status[ncols + i] = _ps_row_nonbasic_status(r_act, rlo, rhi)
+            else
+                m.dual_row_sol[i] = 0.0
+                m.status[ncols + i] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+            end
         elseif act.kind == _PS_ACT_ROW_SINGLETON
             i = Int(act.row)
             j = Int(act.col1)
@@ -1313,10 +1362,10 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
             lo2_orig = m.col_lower[j2]
             hi2_orig = m.col_upper[j2]
             at_tight_lo = !isnan(tight_lo2) &&
-                          (lo2_orig <= -_PS_INF || tight_lo2 > lo2_orig + 1.0e-7 * max(1.0, abs(lo2_orig))) &&
+                          (lo2_orig <= -_PS_INF || tight_lo2 > lo2_orig + 1.0e-9 * max(1.0, abs(lo2_orig))) &&
                           abs(x2 - tight_lo2) <= 1.0e-5 * max(1.0, abs(tight_lo2))
             at_tight_hi = !isnan(tight_hi2) &&
-                          (hi2_orig >= _PS_INF || tight_hi2 < hi2_orig - 1.0e-7 * max(1.0, abs(hi2_orig))) &&
+                          (hi2_orig >= _PS_INF || tight_hi2 < hi2_orig - 1.0e-9 * max(1.0, abs(hi2_orig))) &&
                           abs(x2 - tight_hi2) <= 1.0e-5 * max(1.0, abs(tight_hi2))
 
             swap_to_lo = (st2 == CLP_STATUS_AT_LOWER && at_tight_lo && abs(rc2) > 1.0e-12) ||
@@ -1408,6 +1457,8 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
             req_hi = min(hi, r_max)
             row_st = _sb_get_status(m.status[ncols + i])
 
+            tol_lo = lo > -_PS_INF ? 1.0e-9 * max(1.0, abs(lo)) : 0.0
+            tol_hi = hi < _PS_INF ? 1.0e-9 * max(1.0, abs(hi)) : 0.0
             if req_lo > req_hi
                 if r_min > hi
                     m.col_activity[j] = hi
@@ -1416,16 +1467,16 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
                     m.col_activity[j] = lo
                     m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
                 end
-            elseif row_st == CLP_STATUS_AT_LOWER && a > 0.0 && hi < _PS_INF && req_lo <= hi && hi <= r_max
+            elseif row_st == CLP_STATUS_AT_LOWER && a > 0.0 && hi < _PS_INF && req_lo - tol_hi <= hi && hi <= r_max + tol_hi
                 m.col_activity[j] = hi
                 m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_UPPER)
-            elseif row_st == CLP_STATUS_AT_LOWER && a < 0.0 && lo > -_PS_INF && r_min <= lo && lo <= req_hi
+            elseif row_st == CLP_STATUS_AT_LOWER && a < 0.0 && lo > -_PS_INF && r_min - tol_lo <= lo && lo <= req_hi + tol_lo
                 m.col_activity[j] = lo
                 m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
-            elseif row_st == CLP_STATUS_AT_UPPER && a > 0.0 && lo > -_PS_INF && r_min <= lo && lo <= req_hi
+            elseif row_st == CLP_STATUS_AT_UPPER && a > 0.0 && lo > -_PS_INF && r_min - tol_lo <= lo && lo <= req_hi + tol_lo
                 m.col_activity[j] = lo
                 m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
-            elseif row_st == CLP_STATUS_AT_UPPER && a < 0.0 && hi < _PS_INF && req_lo <= hi && hi <= r_max
+            elseif row_st == CLP_STATUS_AT_UPPER && a < 0.0 && hi < _PS_INF && req_lo - tol_hi <= hi && hi <= r_max + tol_hi
                 m.col_activity[j] = hi
                 m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_UPPER)
             elseif lo > -_PS_INF && req_lo <= lo && lo <= req_hi

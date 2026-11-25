@@ -5,11 +5,19 @@ version = "0.1.0"
 
 [deps]
 
+[weakdeps]
+MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
+
+[extensions]
+JClpMOIExt = "MathOptInterface"
+
 [extras]
+MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Test", "MathOptInterface"]
 
 [compat]
-julia = "^1"
+MathOptInterface = "1"
+julia = "1.9"

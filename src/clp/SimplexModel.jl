@@ -747,6 +747,16 @@ function delete_rim!(m::ClpSimplexModel)::Nothing
         m.problem_status, m.secondary_status,
     )
 
+    if m.obj_sense != 1.0
+        s = m.obj_sense
+        @inbounds for j in 1:ncols
+            m.reduced_cost[j] *= s
+        end
+        @inbounds for i in 1:nrows
+            m.dual_row_sol[i] *= s
+        end
+    end
+
     # True unscaled objective value (in user's original sense + offset)
     obj = -m.obj_offset
     @inbounds for j in 1:ncols

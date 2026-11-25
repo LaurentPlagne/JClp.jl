@@ -18,4 +18,14 @@ include("clp/SimplexModel.jl")
 include("clp/SimplexSolve.jl")
 include("clp/Presolve.jl")
 
+"""
+    Optimizer(; kwargs...)
+
+Create a `MathOptInterface` optimizer backed by `JClp`.
+
+`JClp.Optimizer` is implemented in the `JClpMOIExt` package extension and is
+automatically populated when `MathOptInterface` (or `JuMP`) is loaded.
+"""
+function Optimizer end
+
 end # module
