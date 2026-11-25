@@ -33,10 +33,10 @@ function _ftran_permute_back!(
             val = region[ir]
             region[ir] = 0.0
             if abs(val) > tol
-                out_row = Int(perm_back[ir])
+                out_row32 = perm_back[ir]
                 nnz += 1
-                out_idx[nnz] = Int32(out_row)
-                out[out_row] = val
+                out_idx[nnz] = out_row32
+                out[Int(out_row32)] = val
             end
         end
     end
@@ -61,14 +61,15 @@ function ftran_l_densish!(
     nnz = 0
     smallest = lu.nrows_extra + 1
     @inbounds for k in 1:nnz_in
-        ipiv = Int(region_idx[k])
+        ipiv32 = region_idx[k]
+        ipiv = Int(ipiv32)
         if ipiv >= base
             if ipiv < smallest
                 smallest = ipiv
             end
         else
             nnz += 1
-            region_idx[nnz] = Int32(ipiv)
+            region_idx[nnz] = ipiv32
         end
     end
 
@@ -83,7 +84,7 @@ function ftran_l_densish!(
                     region[ir] = _lu_fmsub(el_l[j], pval, region[ir])
                 end
                 nnz += 1
-                region_idx[nnz] = Int32(i)
+                region_idx[nnz] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -95,7 +96,7 @@ function ftran_l_densish!(
         if pval != 0.0
             if abs(pval) > tol
                 nnz += 1
-                region_idx[nnz] = Int32(i)
+                region_idx[nnz] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -123,10 +124,11 @@ function ftran_l_sparsish!(
     nnz = 0
     smallest = lu.nrows_extra + 1
     @inbounds for k in 1:nnz_in
-        ipiv = Int(region_idx[k])
+        ipiv32 = region_idx[k]
+        ipiv = Int(ipiv32)
         if ipiv < base
             nnz += 1
-            region_idx[nnz] = Int32(ipiv)
+            region_idx[nnz] = ipiv32
         else
             if ipiv < smallest
                 smallest = ipiv
@@ -149,7 +151,7 @@ function ftran_l_sparsish!(
                 _set_mark!(mark, ir)
             end
             nnz += 1
-            region_idx[nnz] = Int32(i)
+            region_idx[nnz] = i % Int32
         else
             region[i] = 0.0
         end
@@ -174,7 +176,7 @@ function ftran_l_sparsish!(
                             _set_mark!(mark, ir)
                         end
                         nnz += 1
-                        region_idx[nnz] = Int32(ii)
+                        region_idx[nnz] = ii % Int32
                     else
                         region[ii] = 0.0
                     end
@@ -195,7 +197,7 @@ function ftran_l_sparsish!(
                 region[ir] = _lu_fmsub(el_l[j], pval, region[ir])
             end
             nnz += 1
-            region_idx[nnz] = Int32(i)
+            region_idx[nnz] = i % Int32
         else
             region[i] = 0.0
         end
@@ -206,7 +208,7 @@ function ftran_l_sparsish!(
         pval = region[i]
         if abs(pval) > tol
             nnz += 1
-            region_idx[nnz] = Int32(i)
+            region_idx[nnz] = i % Int32
         else
             region[i] = 0.0
         end
@@ -245,28 +247,31 @@ function ftran_l_sparse!(
     nnz = 0
     n_list = 0
     @inbounds for k in 1:nnz_in
-        kpiv = Int(region_idx[k])
+        kpiv32 = region_idx[k]
+        kpiv = Int(kpiv32)
         if kpiv >= base
             if mark[kpiv] == UInt8(0)
-                stack[1] = Int32(kpiv)
+                stack[1] = kpiv32
                 j = Int(start_col[kpiv + 1]) - 1
                 n_stack = 1
                 while n_stack >= 1
                     if j >= Int(start_col[kpiv])
-                        jpiv = Int(idx_row[j])
+                        jpiv32 = idx_row[j]
+                        jpiv = Int(jpiv32)
                         j -= 1
-                        next[n_stack] = Int32(j)
+                        next[n_stack] = j % Int32
                         if mark[jpiv] == UInt8(0)
+                            kpiv32 = jpiv32
                             kpiv = jpiv
                             j = Int(start_col[kpiv + 1]) - 1
                             n_stack += 1
-                            stack[n_stack] = Int32(kpiv)
+                            stack[n_stack] = kpiv32
                             mark[kpiv] = UInt8(1)
-                            next[n_stack] = Int32(j)
+                            next[n_stack] = j % Int32
                         end
                     else
                         n_list += 1
-                        list[n_list] = Int32(kpiv)
+                        list[n_list] = kpiv % Int32
                         mark[kpiv] = UInt8(1)
                         n_stack -= 1
                         if n_stack >= 1
@@ -278,17 +283,18 @@ function ftran_l_sparse!(
             end
         else
             nnz += 1
-            region_idx[nnz] = Int32(kpiv)
+            region_idx[nnz] = kpiv32
         end
     end
 
     @inbounds for i in n_list:-1:1
-        ipiv = Int(list[i])
+        ipiv32 = list[i]
+        ipiv = Int(ipiv32)
         mark[ipiv] = UInt8(0)
         pval = region[ipiv]
         if abs(pval) > tol
             nnz += 1
-            region_idx[nnz] = Int32(ipiv)
+            region_idx[nnz] = ipiv32
             js = Int(start_col[ipiv])
             je = Int(start_col[ipiv + 1]) - 1
             for j in js:je
@@ -359,7 +365,7 @@ function ftran_l!(
                 if val != 0.0
                     if abs(val) >= 1.0e-15
                         number += 1
-                        region_idx[number] = Int32(ii)
+                        region_idx[number] = ii % Int32
                     else
                         region[ii] = 0.0
                     end
@@ -431,10 +437,11 @@ function ftran_r!(
 
         new_num = 0
         @inbounds for i in 1:nnz
-            ir = Int(region_idx[i])
+            ir32 = region_idx[i]
+            ir = Int(ir32)
             if mark[ir] == UInt8(0)
                 new_num += 1
-                region_idx[new_num] = Int32(ir)
+                region_idx[new_num] = ir32
             end
             num = Int(len_r[ir])
             if num != 0
@@ -456,7 +463,7 @@ function ftran_r!(
                 region[i] = pval
                 if mark[i] == UInt8(0)
                     nnz += 1
-                    region_idx[nnz] = Int32(i)
+                    region_idx[nnz] = i % Int32
                 end
                 num = Int(len_r[i])
                 s = Int(start_r[i])
@@ -496,7 +503,7 @@ function ftran_r!(
             if abs(pval) > tol
                 region[i] = pval
                 nnz += 1
-                region_idx[nnz] = Int32(i)
+                region_idx[nnz] = i % Int32
                 num = Int(len_r[i])
                 s = Int(start_r[i])
                 e = s + num - 1
@@ -526,7 +533,7 @@ function ftran_r!(
             if abs(pval) > tol
                 region[i] = pval
                 nnz += 1
-                region_idx[nnz] = Int32(i)
+                region_idx[nnz] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -580,17 +587,18 @@ function ftran_r_ft!(
             len_r = lu.len_row_r
 
             @inbounds s_u = Int(start_col_u[end_slot])
-            @inbounds start_col_u[icol] = Int32(s_u)
+            @inbounds start_col_u[icol] = s_u % Int32
             put_base = s_u - 1
 
             new_num = 0
             @inbounds for i in 1:nnz
-                ir = Int(region_idx[i])
+                ir32 = region_idx[i]
+                ir = Int(ir32)
                 pval = region[ir]
                 if mark[ir] == UInt8(0)
                     new_num += 1
                     el_u[put_base + new_num] = pval
-                    region_idx[new_num] = Int32(ir)
+                    region_idx[new_num] = ir32
                 end
                 num = Int(len_r[ir])
                 if num != 0
@@ -612,7 +620,7 @@ function ftran_r_ft!(
                     if mark[i] == UInt8(0)
                         nnz += 1
                         el_u[put_base + nnz] = pval
-                        region_idx[nnz] = Int32(i)
+                        region_idx[nnz] = i % Int32
                     end
                     num = Int(len_r[i])
                     s = Int(start_r[i])
@@ -627,8 +635,8 @@ function ftran_r_ft!(
                 mark[ir] = UInt8(0)
             end
             @inbounds begin
-                len_col_u[icol] = Int32(nnz)
-                start_col_u[end_slot] = Int32(s_u + nnz)
+                len_col_u[icol] = nnz % Int32
+                start_col_u[end_slot] = (s_u + nnz) % Int32
             end
         elseif method == 1
             el_r = lu.element_row_r
@@ -656,7 +664,7 @@ function ftran_r_ft!(
                 if abs(pval) > tol
                     region[i] = pval
                     nnz += 1
-                    region_idx[nnz] = Int32(i)
+                    region_idx[nnz] = i % Int32
                     num = Int(len_r[i])
                     s = Int(start_r[i])
                     e = s + num - 1
@@ -686,7 +694,7 @@ function ftran_r_ft!(
                 if abs(pval) > tol
                     region[i] = pval
                     nnz += 1
-                    region_idx[nnz] = Int32(i)
+                    region_idx[nnz] = i % Int32
                 else
                     region[i] = 0.0
                 end
@@ -709,16 +717,16 @@ function ftran_r_ft!(
                 end
             end
             @inbounds begin
-                len_col_u[icol] = Int32(nnz)
-                start_col_u[end_slot] = Int32(s_u + nnz)
+                len_col_u[icol] = nnz % Int32
+                start_col_u[end_slot] = (s_u + nnz) % Int32
             end
         end
         return nnz
     else
         @inbounds begin
             s_u = Int(start_col_u[icol])
-            len_col_u[icol] = Int32(nnz)
-            start_col_u[end_slot] = Int32(s_u + nnz)
+            len_col_u[icol] = nnz % Int32
+            start_col_u[end_slot] = (s_u + nnz) % Int32
             put_base = s_u - 1
             for i in 1:nnz
                 idx_val = region_idx[i]
@@ -752,13 +760,13 @@ function ftran_u_densish!(
             if abs(pval) > tol
                 s = Int(start_col[i])
                 e = s + Int(len_col[i]) - 1
-                for j in e:-1:s
+                for j in s:e
                     ir = Int(idx_row[j])
                     region[ir] = _lu_fmsub(el_u[j], pval, region[ir])
                 end
                 region[i] = pval * piv_reg[i]
                 nnz += 1
-                region_idx[nnz] = Int32(i)
+                region_idx[nnz] = i % Int32
             end
         end
     end
@@ -770,7 +778,7 @@ function ftran_u_densish!(
                 if abs(val) > tol
                     region[i] = -val
                     nnz += 1
-                    region_idx[nnz] = Int32(i)
+                    region_idx[nnz] = i % Int32
                 else
                     region[i] = 0.0
                 end
@@ -782,7 +790,7 @@ function ftran_u_densish!(
             if val != 0.0
                 if abs(val) > tol
                     nnz += 1
-                    region_idx[nnz] = Int32(i)
+                    region_idx[nnz] = i % Int32
                 else
                     region[i] = 0.0
                 end
@@ -817,9 +825,10 @@ function ftran_u_sparse!(
     put_pos = mre
     n_list = 0
     @inbounds for i in 1:nnz_in
-        kpiv = Int(index_in[i])
-        stack[1] = Int32(kpiv)
-        next[1] = Int32(Int(start_col[kpiv]) + Int(len_col[kpiv]) - 1)
+        kpiv32 = index_in[i]
+        kpiv = Int(kpiv32)
+        stack[1] = kpiv32
+        next[1] = (Int(start_col[kpiv]) + Int(len_col[kpiv]) - 1) % Int32
         n_stack = 1
         while n_stack > 0
             kpiv = Int(stack[n_stack])
@@ -827,25 +836,26 @@ function ftran_u_sparse!(
             if mark[kpiv] != UInt8(1)
                 j = Int(next[n_stack + 1])
                 if j >= Int(start_col[kpiv])
-                    next_kpiv = Int(idx_row[j])
+                    next_kpiv32 = idx_row[j]
+                    next_kpiv = Int(next_kpiv32)
                     j -= 1
                     n_stack += 1
-                    next[n_stack] = Int32(j)
+                    next[n_stack] = j % Int32
                     if mark[next_kpiv] == UInt8(0)
                         nin = Int(len_col[next_kpiv])
                         if nin != 0
                             j2 = Int(start_col[next_kpiv]) + nin - 1
                             n_stack += 1
-                            stack[n_stack] = Int32(next_kpiv)
+                            stack[n_stack] = next_kpiv32
                             mark[next_kpiv] = UInt8(2)
-                            next[n_stack] = Int32(j2)
+                            next[n_stack] = j2 % Int32
                         else
                             mark[next_kpiv] = UInt8(1)
                             if next_kpiv > n_slacks
                                 n_list += 1
-                                list[n_list] = Int32(next_kpiv)
+                                list[n_list] = next_kpiv32
                             else
-                                stack[put_pos] = Int32(next_kpiv)
+                                stack[put_pos] = next_kpiv32
                                 put_pos -= 1
                             end
                         end
@@ -854,9 +864,9 @@ function ftran_u_sparse!(
                     mark[kpiv] = UInt8(1)
                     if kpiv > n_slacks
                         n_list += 1
-                        list[n_list] = Int32(kpiv)
+                        list[n_list] = kpiv % Int32
                     else
-                        stack[put_pos] = Int32(kpiv)
+                        stack[put_pos] = kpiv % Int32
                         put_pos -= 1
                     end
                 end
@@ -866,7 +876,8 @@ function ftran_u_sparse!(
 
     nnz = 0
     @inbounds for i in n_list:-1:1
-        ipiv = Int(list[i])
+        ipiv32 = list[i]
+        ipiv = Int(ipiv32)
         mark[ipiv] = UInt8(0)
         pval = region[ipiv]
         region[ipiv] = 0.0
@@ -879,32 +890,34 @@ function ftran_u_sparse!(
             end
             region[ipiv] = pval * piv_reg[ipiv]
             nnz += 1
-            region_idx[nnz] = Int32(ipiv)
+            region_idx[nnz] = ipiv32
         end
     end
 
     if lu.slack_value == 1.0
         @inbounds for p in (put_pos + 1):mre
-            ipiv = Int(stack[p])
+            ipiv32 = stack[p]
+            ipiv = Int(ipiv32)
             mark[ipiv] = UInt8(0)
             pval = region[ipiv]
             region[ipiv] = 0.0
             if abs(pval) > tol
                 region[ipiv] = pval
                 nnz += 1
-                region_idx[nnz] = Int32(ipiv)
+                region_idx[nnz] = ipiv32
             end
         end
     else
         @inbounds for p in (put_pos + 1):mre
-            ipiv = Int(stack[p])
+            ipiv32 = stack[p]
+            ipiv = Int(ipiv32)
             mark[ipiv] = UInt8(0)
             pval = region[ipiv]
             region[ipiv] = 0.0
             if abs(pval) > tol
                 region[ipiv] = -pval
                 nnz += 1
-                region_idx[nnz] = Int32(ipiv)
+                region_idx[nnz] = ipiv32
             end
         end
     end
@@ -942,14 +955,14 @@ function ftran_u_sparsish!(
         if abs(pval) > tol
             s = Int(start_col[i])
             e = s + Int(len_col[i]) - 1
-            for j in e:-1:s
+            for j in s:e
                 ir = Int(idx_row[j])
                 _set_mark!(mark, ir)
                 region[ir] = _lu_fmsub(el_u[j], pval, region[ir])
             end
             region[i] = pval * piv_reg[i]
             nnz += 1
-            region_idx[nnz] = Int32(i)
+            region_idx[nnz] = i % Int32
         end
     end
 
@@ -968,14 +981,14 @@ function ftran_u_sparsish!(
                         if abs(pval) > tol
                             s = Int(start_col[ii])
                             e = s + Int(len_col[ii]) - 1
-                            for j in e:-1:s
+                            for j in s:e
                                 ir = Int(idx_row[j])
                                 _set_mark!(mark, ir)
                                 region[ir] = _lu_fmsub(el_u[j], pval, region[ir])
                             end
                             region[ii] = pval * piv_reg[ii]
                             nnz += 1
-                            region_idx[nnz] = Int32(ii)
+                            region_idx[nnz] = ii % Int32
                         end
                     end
                 end
@@ -991,14 +1004,14 @@ function ftran_u_sparsish!(
         if abs(pval) > tol
             s = Int(start_col[i])
             e = s + Int(len_col[i]) - 1
-            for j in e:-1:s
+            for j in s:e
                 ir = Int(idx_row[j])
                 _set_mark!(mark, ir)
                 region[ir] = _lu_fmsub(el_u[j], pval, region[ir])
             end
             region[i] = pval * piv_reg[i]
             nnz += 1
-            region_idx[nnz] = Int32(i)
+            region_idx[nnz] = i % Int32
         end
     end
 
@@ -1012,7 +1025,7 @@ function ftran_u_sparsish!(
                 if abs(val) > tol
                     region[ii] = sgn * val
                     nnz += 1
-                    region_idx[nnz] = Int32(ii)
+                    region_idx[nnz] = ii % Int32
                 end
             end
         end
@@ -1028,7 +1041,7 @@ function ftran_u_sparsish!(
                         if abs(val) > tol
                             region[ii] = sgn * val
                             nnz += 1
-                            region_idx[nnz] = Int32(ii)
+                            region_idx[nnz] = ii % Int32
                         end
                     end
                 end
@@ -1105,14 +1118,15 @@ function ftran_pfi!(
                 js = Int(start_col[k])
                 je = Int(start_col[k + 1]) - 1
                 for j in js:je
-                    ir = Int(idx_row[j])
+                    ir32 = idx_row[j]
+                    ir = Int(ir32)
                     old_v = region[ir]
                     val = _lu_fmsub(pval, el_u[j], old_v)
                     if old_v == 0.0
                         if abs(val) > tol
                             region[ir] = val
                             nnz += 1
-                            region_idx[nnz] = Int32(ir)
+                            region_idx[nnz] = ir32
                         end
                     elseif abs(val) > tol
                         region[ir] = val
@@ -1164,7 +1178,7 @@ function ftran_two_u_densish!(
                 end
                 region2[i] = pval2 * piv_reg[i]
                 nnz_b += 1
-                index2[nnz_b] = Int32(i)
+                index2[nnz_b] = i % Int32
             else
                 for j in s:e
                     ir = Int(idx_row[j])
@@ -1173,12 +1187,13 @@ function ftran_two_u_densish!(
                     region2[ir] = _lu_fmsub(v, pval2, region2[ir])
                 end
                 pr = piv_reg[i]
+                i32 = i % Int32
                 region1[i] = pval1 * pr
                 nnz_a += 1
-                index1[nnz_a] = Int32(i)
+                index1[nnz_a] = i32
                 region2[i] = pval2 * pr
                 nnz_b += 1
-                index2[nnz_b] = Int32(i)
+                index2[nnz_b] = i32
             end
         elseif do1
             s = Int(start_col[i])
@@ -1189,7 +1204,7 @@ function ftran_two_u_densish!(
             end
             region1[i] = pval1 * piv_reg[i]
             nnz_a += 1
-            index1[nnz_a] = Int32(i)
+            index1[nnz_a] = i % Int32
         end
     end
 
@@ -1199,7 +1214,7 @@ function ftran_two_u_densish!(
         if abs(v2) > tol
             region2[i] = -v2
             nnz_b += 1
-            index2[nnz_b] = Int32(i)
+            index2[nnz_b] = i % Int32
         else
             region2[i] = 0.0
         end
@@ -1207,7 +1222,7 @@ function ftran_two_u_densish!(
             if abs(v1) > tol
                 region1[i] = -v1
                 nnz_a += 1
-                index1[nnz_a] = Int32(i)
+                index1[nnz_a] = i % Int32
             else
                 region1[i] = 0.0
             end
@@ -1297,10 +1312,10 @@ function ftran_ft!(
         icol = lu.ncols_extra + 1
         end_slot = lu.max_cols_extra + 1
         @inbounds s_u = Int(start_col_u[end_slot])
-        @inbounds start_col_u[icol] = Int32(s_u)
+        @inbounds start_col_u[icol] = s_u % Int32
         do_ft = (s_u + lu.nrows_extra) <= (lu.len_area_u + 1)
         if !do_ft
-            @inbounds start_col_u[end_slot] = Int32(lu.len_area_u + 2)
+            @inbounds start_col_u[end_slot] = (lu.len_area_u + 2) % Int32
         end
     end
 
@@ -1396,7 +1411,7 @@ function ftran_two_ft!(
     end
 
     perm = lu.permute
-    @inbounds lu.start_col_u[lu.ncols_extra + 1] = Int32(s_u)
+    @inbounds lu.start_col_u[lu.ncols_extra + 1] = s_u % Int32
     ft_idx_u = @view lu.index_row_u[s_u:end]
 
     ft_el = no_permute_r3 ? r1_val : r3_val

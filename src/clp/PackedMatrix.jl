@@ -382,7 +382,7 @@ function clp_mat_guts_tt_unscaled!(
             if abs(val) > zero_tol
                 nnz += 1
                 out_val[nnz] = val
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol % Int32
             end
         end
     end
@@ -415,7 +415,7 @@ function clp_mat_guts_tt_scaled!(
             if abs(val) > zero_tol
                 nnz += 1
                 out_val[nnz] = val
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol % Int32
             end
         end
     end
@@ -445,7 +445,7 @@ function clp_mat_guts_tt_unscaled_status!(
             if abs(val) > zero_tol
                 nnz += 1
                 out_val[nnz] = val
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol % Int32
             end
         end
     end
@@ -478,7 +478,7 @@ function clp_mat_guts_tt_scaled_status!(
             if abs(val) > zero_tol
                 nnz += 1
                 out_val[nnz] = val
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol % Int32
             end
         end
     end
@@ -516,9 +516,10 @@ function clp_mat_guts_tt_unscaled_dual!(
                 val = _pm_fmadd(pi[Int(indices[j])], elements[j], val)
             end
             if abs(val) > zero_tol
+                icol32 = icol % Int32
                 nnz += 1
                 out_val[nnz] = val
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
                 if wanted > 0
                     mult = wanted == 1 ? -1.0 : 1.0
                     alpha = val * mult
@@ -532,7 +533,7 @@ function clp_mat_guts_tt_unscaled_dual!(
                             end
                             nremaining += 1
                             spare_val[nremaining] = alpha * mult
-                            spare_idx[nremaining] = Int32(icol)
+                            spare_idx[nremaining] = icol32
                         end
                     end
                 end
@@ -573,7 +574,7 @@ function clp_mat_tt_by_col_unpacked!(
                     s = nxt
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = -val
                     end
                 end
@@ -588,7 +589,7 @@ function clp_mat_tt_by_col_unpacked!(
                     end
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = -val
                     end
                 end
@@ -606,7 +607,7 @@ function clp_mat_tt_by_col_unpacked!(
                     val *= scalar
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = val
                     end
                 end
@@ -622,7 +623,7 @@ function clp_mat_tt_by_col_unpacked!(
                     val *= scalar
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = val
                     end
                 end
@@ -645,7 +646,7 @@ function clp_mat_tt_by_col_unpacked!(
                     val *= cs[icol]
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = -val
                     end
                 end
@@ -662,7 +663,7 @@ function clp_mat_tt_by_col_unpacked!(
                     val *= cs[icol]
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = -val
                     end
                 end
@@ -681,7 +682,7 @@ function clp_mat_tt_by_col_unpacked!(
                     val *= cs[icol] * scalar
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = val
                     end
                 end
@@ -698,7 +699,7 @@ function clp_mat_tt_by_col_unpacked!(
                     val *= scalar * cs[icol]
                     if abs(val) > zero_tol
                         nnz += 1
-                        out_idx[nnz] = Int32(icol)
+                        out_idx[nnz] = icol % Int32
                         out_val[icol] = val
                     end
                 end
@@ -748,7 +749,7 @@ function clp_mat_tt_by_col_packed_gaps!(
                 if abs(val) > zero_tol
                     nnz += 1
                     out_val[nnz] = val
-                    out_idx[nnz] = Int32(icol)
+                    out_idx[nnz] = icol % Int32
                 end
             end
         else
@@ -776,7 +777,7 @@ function clp_mat_tt_by_col_packed_gaps!(
                 if abs(val) > zero_tol
                     nnz += 1
                     out_val[nnz] = val
-                    out_idx[nnz] = Int32(icol)
+                    out_idx[nnz] = icol % Int32
                 end
             end
         end
@@ -847,17 +848,19 @@ function clp_mat_tt_by_row_eq2_packed!(
         nnz = 0
         val = pi0 * scalar
         for j in s0:e0
-            icol = Int(cols[j])
+            icol32 = cols[j]
+            icol = Int(icol32)
             v2 = val * elements[j]
             nnz += 1
             out_val[nnz] = v2
             marked[icol] = UInt8(1)
-            lookup[icol] = Int32(nnz)
-            out_idx[nnz] = Int32(icol)
+            lookup[icol] = nnz % Int32
+            out_idx[nnz] = icol32
         end
         val = pi1 * scalar
         for j in s1:e1
-            icol = Int(cols[j])
+            icol32 = cols[j]
+            icol = Int(icol32)
             v2 = val * elements[j]
             if marked[icol] != UInt8(0)
                 k = Int(lookup[icol])
@@ -866,20 +869,21 @@ function clp_mat_tt_by_row_eq2_packed!(
                 if abs(v2) > zero_tol
                     nnz += 1
                     out_val[nnz] = v2
-                    out_idx[nnz] = Int32(icol)
+                    out_idx[nnz] = icol32
                 end
             end
         end
         n = nnz
         nnz = 0
         for i in 1:n
-            icol = Int(out_idx[i])
+            icol32 = out_idx[i]
+            icol = Int(icol32)
             marked[icol] = UInt8(0)
             vi = out_val[i]
             if abs(vi) > zero_tol
                 nnz += 1
                 out_val[nnz] = vi
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
             end
         end
         for i in (nnz + 1):n
@@ -910,7 +914,8 @@ function clp_mat_tt_by_row_ge3_packed!(
             s = Int(row_starts[irow])
             e = Int(row_starts[irow + 1]) - 1
             for j in s:e
-                icol = Int(cols[j])
+                icol32 = cols[j]
+                icol = Int(icol32)
                 in_val = work[icol]
                 el_val = elements[j] * val
                 if in_val != 0.0
@@ -922,20 +927,21 @@ function clp_mat_tt_by_row_ge3_packed!(
                 else
                     work[icol] = el_val
                     nnz += 1
-                    out_idx[nnz] = Int32(icol)
+                    out_idx[nnz] = icol32
                 end
             end
         end
         save_n = nnz
         nnz = 0
         for i in 1:save_n
-            icol = Int(out_idx[i])
+            icol32 = out_idx[i]
+            icol = Int(icol32)
             v = work[icol]
             work[icol] = 0.0
             if abs(v) > zero_tol
                 nnz += 1
                 out_val[nnz] = v
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
             end
         end
     end
@@ -974,7 +980,7 @@ function clp_mat_tt_by_row_gek_packed!(
                 if abs(v) > zero_tol
                     nnz += 1
                     out_val[nnz] = v
-                    out_idx[nnz] = Int32(i)
+                    out_idx[nnz] = i % Int32
                 end
             end
         end
@@ -1003,11 +1009,12 @@ function clp_mat_tt_by_row_unpacked!(
             s = Int(row_starts[irow])
             e = Int(row_starts[irow + 1]) - 1
             for j in s:e
-                icol = Int(cols[j])
+                icol32 = cols[j]
+                icol = Int(icol32)
                 if marked[icol] == UInt8(0)
                     marked[icol] = UInt8(1)
                     nnz += 1
-                    out_idx[nnz] = Int32(icol)
+                    out_idx[nnz] = icol32
                 end
                 out_val[icol] = _pm_fmadd(val, elements[j], out_val[icol])
             end
@@ -1015,11 +1022,12 @@ function clp_mat_tt_by_row_unpacked!(
         n_orig = nnz
         nnz = 0
         for i in 1:n_orig
-            icol = Int(out_idx[i])
+            icol32 = out_idx[i]
+            icol = Int(icol32)
             marked[icol] = UInt8(0)
             if abs(out_val[icol]) > zero_tol
                 nnz += 1
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
             else
                 out_val[icol] = 0.0
             end
@@ -1030,9 +1038,10 @@ function clp_mat_tt_by_row_unpacked!(
         s0 = Int(row_starts[irow0])
         e0 = Int(row_starts[irow0 + 1]) - 1
         for j in s0:e0
-            icol = Int(cols[j])
+            icol32 = cols[j]
+            icol = Int(icol32)
             nnz += 1
-            out_idx[nnz] = Int32(icol)
+            out_idx[nnz] = icol32
             out_val[icol] = val * elements[j]
         end
         irow1 = Int(which_row[2])
@@ -1040,24 +1049,26 @@ function clp_mat_tt_by_row_unpacked!(
         s1 = Int(row_starts[irow1])
         e1 = Int(row_starts[irow1 + 1]) - 1
         for j in s1:e1
-            icol = Int(cols[j])
+            icol32 = cols[j]
+            icol = Int(icol32)
             v2 = val * elements[j]
             cur = out_val[icol]
             if cur != 0.0
                 v2 += cur
             else
                 nnz += 1
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
             end
             out_val[icol] = v2
         end
         n_orig = nnz
         nnz = 0
         for i in 1:n_orig
-            icol = Int(out_idx[i])
+            icol32 = out_idx[i]
+            icol = Int(icol32)
             if abs(out_val[icol]) > zero_tol
                 nnz += 1
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
             else
                 out_val[icol] = 0.0
             end
@@ -1068,11 +1079,12 @@ function clp_mat_tt_by_row_unpacked!(
         s = Int(row_starts[irow])
         e = Int(row_starts[irow + 1]) - 1
         for j in s:e
-            icol = Int(cols[j])
+            icol32 = cols[j]
+            icol = Int(icol32)
             v2 = val * elements[j]
             if abs(v2) > zero_tol
                 nnz += 1
-                out_idx[nnz] = Int32(icol)
+                out_idx[nnz] = icol32
                 out_val[icol] = v2
             end
         end
@@ -1259,7 +1271,7 @@ end
         @inbounds out_val[irow] = abs(s) >= CLP_INDEXED_TINY ? s : CLP_INDEXED_REALLY_TINY
     elseif abs(el) >= CLP_INDEXED_TINY
         nnz += 1
-        @inbounds out_idx[nnz] = Int32(irow)
+        @inbounds out_idx[nnz] = irow % Int32
         @inbounds out_val[irow] = el
     end
     return nnz
@@ -1324,12 +1336,12 @@ function clp_mat_unpack_packed!(
             rs = row_scale::AbstractVector{Float64}
             sc = (col_scale::AbstractVector{Float64})[icol]
             for j in s:e
-                irow = Int(indices[j])
-                val = elements[j] * sc * rs[irow]
+                irow32 = indices[j]
+                val = elements[j] * sc * rs[Int(irow32)]
                 if val != 0.0
                     nnz += 1
                     out_val[nnz] = val
-                    out_idx[nnz] = Int32(irow)
+                    out_idx[nnz] = irow32
                 end
             end
         end
@@ -1440,16 +1452,16 @@ function clp_mat_fill_basis!(
                     icol = Int(which_col[i])
                     len = Int(lengths[icol])
                     s = Int(starts[icol])
-                    col_count[i] = Int32(len)
+                    col_count[i] = len % Int32
                     e = s + len - 1
                     for j in s:e
-                        irow = Int(indices[j])
-                        index_row_u[pos] = Int32(irow)
-                        row_count[irow] += Int32(1)
+                        irow32 = indices[j]
+                        index_row_u[pos] = irow32
+                        row_count[Int(irow32)] += Int32(1)
                         element_u[pos] = elements[j]
                         pos += 1
                     end
-                    start_u[i + 1] = Int32(pos)
+                    start_u[i + 1] = pos % Int32
                 end
             else
                 rs = row_scale::AbstractVector{Float64}
@@ -1459,16 +1471,17 @@ function clp_mat_fill_basis!(
                     sc = cs[icol]
                     len = Int(lengths[icol])
                     s = Int(starts[icol])
-                    col_count[i] = Int32(len)
+                    col_count[i] = len % Int32
                     e = s + len - 1
                     for j in s:e
-                        irow = Int(indices[j])
-                        index_row_u[pos] = Int32(irow)
+                        irow32 = indices[j]
+                        irow = Int(irow32)
+                        index_row_u[pos] = irow32
                         row_count[irow] += Int32(1)
                         element_u[pos] = elements[j] * sc * rs[irow]
                         pos += 1
                     end
-                    start_u[i + 1] = Int32(pos)
+                    start_u[i + 1] = pos % Int32
                 end
             end
         else
@@ -1481,15 +1494,15 @@ function clp_mat_fill_basis!(
                     for j in s:e
                         val = elements[j]
                         if val != 0.0
-                            irow = Int(indices[j])
-                            index_row_u[pos] = Int32(irow)
-                            row_count[irow] += Int32(1)
+                            irow32 = indices[j]
+                            index_row_u[pos] = irow32
+                            row_count[Int(irow32)] += Int32(1)
                             element_u[pos] = val
                             pos += 1
                         end
                     end
-                    start_u[i + 1] = Int32(pos)
-                    col_count[i] = Int32(pos - pos0)
+                    start_u[i + 1] = pos % Int32
+                    col_count[i] = (pos - pos0) % Int32
                 end
             else
                 rs = row_scale::AbstractVector{Float64}
@@ -1503,15 +1516,16 @@ function clp_mat_fill_basis!(
                     for j in s:e
                         val = elements[j]
                         if val != 0.0
-                            irow = Int(indices[j])
-                            index_row_u[pos] = Int32(irow)
+                            irow32 = indices[j]
+                            irow = Int(irow32)
+                            index_row_u[pos] = irow32
                             row_count[irow] += Int32(1)
                             element_u[pos] = val * sc * rs[irow]
                             pos += 1
                         end
                     end
-                    start_u[i + 1] = Int32(pos)
-                    col_count[i] = Int32(pos - pos0)
+                    start_u[i + 1] = pos % Int32
+                    col_count[i] = (pos - pos0) % Int32
                 end
             end
         end
@@ -1891,7 +1905,7 @@ function clp_mat_transpose_times2!(
                             else
                                 nnz += 1
                                 dj1_val[nnz] = v2
-                                dj1_idx[nnz] = Int32(icol)
+                                dj1_idx[nnz] = icol % Int32
                             end
                         elseif infeas[icol] != 0.0
                             infeas[icol] = dbl_min
@@ -1904,12 +1918,12 @@ function clp_mat_transpose_times2!(
                             else
                                 nnz += 1
                                 dj1_val[nnz] = v2
-                                dj1_idx[nnz] = Int32(icol)
+                                dj1_idx[nnz] = icol % Int32
                             end
                         else
                             nnz += 1
                             dj1_val[nnz] = 0.0
-                            dj1_idx[nnz] = Int32(icol)
+                            dj1_idx[nnz] = icol % Int32
                         end
                     elseif st == CLP_STATUS_IS_FREE || st == CLP_STATUS_SUPER_BASIC
                         if abs(val) > CLP_FREE_ACCEPT * dual_tol
@@ -1920,12 +1934,12 @@ function clp_mat_transpose_times2!(
                             else
                                 nnz += 1
                                 dj1_val[nnz] = v2
-                                dj1_idx[nnz] = Int32(icol)
+                                dj1_idx[nnz] = icol % Int32
                             end
                         else
                             nnz += 1
                             dj1_val[nnz] = 0.0
-                            dj1_idx[nnz] = Int32(icol)
+                            dj1_idx[nnz] = icol % Int32
                         end
                     end
                 end
@@ -1988,7 +2002,7 @@ function clp_mat_transpose_times2!(
                             else
                                 nnz += 1
                                 dj1_val[nnz] = v2
-                                dj1_idx[nnz] = Int32(icol)
+                                dj1_idx[nnz] = icol % Int32
                             end
                         elseif infeas[icol] != 0.0
                             infeas[icol] = dbl_min
@@ -2001,7 +2015,7 @@ function clp_mat_transpose_times2!(
                             else
                                 nnz += 1
                                 dj1_val[nnz] = v2
-                                dj1_idx[nnz] = Int32(icol)
+                                dj1_idx[nnz] = icol % Int32
                             end
                         elseif infeas[icol] != 0.0
                             infeas[icol] = dbl_min
@@ -2015,12 +2029,12 @@ function clp_mat_transpose_times2!(
                             else
                                 nnz += 1
                                 dj1_val[nnz] = v2
-                                dj1_idx[nnz] = Int32(icol)
+                                dj1_idx[nnz] = icol % Int32
                             end
                         else
                             nnz += 1
                             dj1_val[nnz] = 0.0
-                            dj1_idx[nnz] = Int32(icol)
+                            dj1_idx[nnz] = icol % Int32
                         end
                     end
                 end

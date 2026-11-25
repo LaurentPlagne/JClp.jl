@@ -460,7 +460,7 @@ function clp_fact_empty_rows!(
 
     pos = 1
     @inbounds for irow in 1:nr
-        start_row[irow] = Int32(pos)
+        start_row[irow] = pos % Int32
         pos += Int(len_row[irow])
     end
     lu.factor_elements = pos - 1
@@ -475,10 +475,10 @@ function clp_fact_empty_rows!(
         for j in s:e
             irow = Int(idx_row[j])
             ilook = Int(len_row[irow])
-            len_row[irow] = Int32(ilook + 1)
+            len_row[irow] = (ilook + 1) % Int32
             k = Int(start_row[irow]) + ilook
-            idx_col[k] = Int32(i)
-            r2c[k] = Int32(j)
+            idx_col[k] = i % Int32
+            r2c[k] = j % Int32
         end
     end
     return nothing

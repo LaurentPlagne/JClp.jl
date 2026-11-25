@@ -22,11 +22,11 @@ const _LU_LARGE_UNSET       = typemax(Int32)
 )::Nothing
     @inbounds begin
         nxt = first_count[count + 1]
-        last_count[id] = Int32(-2 - count)
-        first_count[count + 1] = Int32(id)
+        last_count[id] = (-2 - count) % Int32
+        first_count[count + 1] = id % Int32
         next_count[id] = nxt
         if nxt > LU_NO_LINK
-            last_count[Int(nxt)] = Int32(id)
+            last_count[Int(nxt)] = id % Int32
         end
     end
     return nothing
@@ -79,7 +79,7 @@ function _separate_links!(
                     last_count[n_i] = last_col
                     next_count[Int(last_col)] = nxt
                 else
-                    last_count[n_i] = Int32(-2 - count)
+                    last_count[n_i] = (-2 - count) % Int32
                     first_col = nxt
                 end
                 last_col = nxt
@@ -88,7 +88,7 @@ function _separate_links!(
                     last_count[n_i] = last_row
                     next_count[Int(last_row)] = nxt
                 else
-                    last_count[n_i] = Int32(-2 - count)
+                    last_count[n_i] = (-2 - count) % Int32
                     first_row = nxt
                 end
                 last_row = nxt
@@ -142,11 +142,11 @@ function _get_col_space!(lu::SparseLU, i_col::Int, extra_needed::Int)::Bool
                 ncp_val = Int(nicp[col])
                 g = sc - ncp_val
                 ge = sc + nc_val - 1
-                start_col[col] = Int32(put + ncp_val)
+                start_col[col] = (put + ncp_val) % Int32
             else
                 g = -sc
                 ge = g + nc_val - 1
-                start_col[col] = Int32(-put)
+                start_col[col] = (-put) % Int32
             end
             for i in g:ge
                 idx_row[put] = idx_row[i]
@@ -156,7 +156,7 @@ function _get_col_space!(lu::SparseLU, i_col::Int, extra_needed::Int)::Bool
             col = Int(next_col[col])
         end
         lu.ncompressions += 1
-        @inbounds start_col[col_end] = Int32(put)
+        @inbounds start_col[col_end] = put % Int32
         space = lau_end - put
         if extra_needed == Int(_LU_COMPRESS_SENTINEL)
             return true
@@ -174,24 +174,25 @@ function _get_col_space!(lu::SparseLU, i_col::Int, extra_needed::Int)::Bool
 
         if extra_needed != 0 || nxt != col_end
             # Unlink i_col and re-insert at tail
-            next_col[lst] = Int32(nxt)
-            last_col[nxt] = Int32(lst)
+            next_col[lst] = nxt % Int32
+            last_col[nxt] = lst % Int32
             lst2 = Int(last_col[col_end])
-            next_col[lst2] = Int32(i_col)
-            last_col[col_end] = Int32(i_col)
-            last_col[i_col] = Int32(lst2)
-            next_col[i_col] = Int32(col_end)
+            i_col32 = i_col % Int32
+            next_col[lst2] = i_col32
+            last_col[col_end] = i_col32
+            last_col[i_col] = lst2 % Int32
+            next_col[i_col] = col_end % Int32
 
             ncp_ic = Int(nicp[i_col])
             g = Int(start_col[i_col]) - ncp_ic
-            start_col[i_col] = Int32(put + ncp_ic)
+            start_col[i_col] = (put + ncp_ic) % Int32
             for k in 0:(number - 1)
                 idx_row[put + k] = idx_row[g + k]
                 el_u[put + k] = el_u[g + k]
             end
             put += number
             new_end = put + extra_needed + 2
-            start_col[col_end] = Int32(new_end)
+            start_col[col_end] = new_end % Int32
             if new_end > lau_end
                 return false
             end
@@ -221,7 +222,7 @@ function _get_row_space!(lu::SparseLU, i_row::Int, extra_needed::Int)::Bool
         @inbounds while r != row_end
             g = Int(start_row[r])
             ge = g + Int(nir[r]) - 1
-            start_row[r] = Int32(put)
+            start_row[r] = put % Int32
             for i in g:ge
                 idx_col[put] = idx_col[i]
                 put += 1
@@ -229,7 +230,7 @@ function _get_row_space!(lu::SparseLU, i_row::Int, extra_needed::Int)::Bool
             r = Int(next_row[r])
         end
         lu.ncompressions += 1
-        @inbounds start_row[row_end] = Int32(put)
+        @inbounds start_row[row_end] = put % Int32
         space = lau_end - put
         if space < extra_needed + number + 2
             lu.status = -99
@@ -241,20 +242,21 @@ function _get_row_space!(lu::SparseLU, i_row::Int, extra_needed::Int)::Bool
         put = Int(start_row[row_end])
         nxt = Int(next_row[i_row])
         lst = Int(last_row[i_row])
-        next_row[lst] = Int32(nxt)
-        last_row[nxt] = Int32(lst)
+        next_row[lst] = nxt % Int32
+        last_row[nxt] = lst % Int32
         lst2 = Int(last_row[row_end])
-        next_row[lst2] = Int32(i_row)
-        last_row[row_end] = Int32(i_row)
-        last_row[i_row] = Int32(lst2)
-        next_row[i_row] = Int32(row_end)
+        i_row32 = i_row % Int32
+        next_row[lst2] = i_row32
+        last_row[row_end] = i_row32
+        last_row[i_row] = lst2 % Int32
+        next_row[i_row] = row_end % Int32
 
         g = Int(start_row[i_row])
-        start_row[i_row] = Int32(put)
+        start_row[i_row] = put % Int32
         for k in 0:(number - 1)
             idx_col[put + k] = idx_col[g + k]
         end
-        start_row[row_end] = Int32(put + number + extra_needed + 4)
+        start_row[row_end] = (put + number + extra_needed + 4) % Int32
     end
     return true
 end
@@ -312,7 +314,7 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
         pos = 1
         @inbounds for ic in 1:nc
             pos += Int(nic[ic])
-            start_col[ic] = Int32(pos)
+            start_col[ic] = pos % Int32
         end
         @inbounds for k in num_el:-1:1
             col = Int(idx_col[k])
@@ -322,7 +324,7 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
                 idx_col[k] = LU_NO_LINK
                 while true
                     look = Int(start_col[col]) - 1
-                    start_col[col] = Int32(look)
+                    start_col[col] = look % Int32
                     val_save = el[look]
                     col_save = Int(idx_col[look])
                     row_save = idx_row[look]
@@ -344,13 +346,14 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
     if state == 0 || state == -1 || state == 1 || state == 2
         pos = 1
         @inbounds for ir in 1:nr
-            start_row[ir] = Int32(pos)
+            start_row[ir] = pos % Int32
             pos += Int(nir[ir])
             nir[ir] = Int32(0)
         end
         @inbounds for ic in 1:nc
             num = Int(nic[ic])
             if num != 0
+                ic32 = ic % Int32
                 first = Int(start_col[ic])
                 largest = first
                 ir_save = idx_row[first]
@@ -358,13 +361,13 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
                 val_largest = abs(val_save)
                 rs = Int(ir_save)
                 look = Int(nir[rs])
-                nir[rs] = Int32(look + 1)
-                idx_col[Int(start_row[rs]) + look] = Int32(ic)
+                nir[rs] = (look + 1) % Int32
+                idx_col[Int(start_row[rs]) + look] = ic32
                 for k in (first + 1):(first + num - 1)
                     r = Int(idx_row[k])
                     lk = Int(nir[r])
-                    nir[r] = Int32(lk + 1)
-                    idx_col[Int(start_row[r]) + lk] = Int32(ic)
+                    nir[r] = (lk + 1) % Int32
+                    idx_col[Int(start_row[r]) + lk] = ic32
                     va = abs(el[k])
                     if va > val_largest
                         val_largest = va
@@ -399,35 +402,37 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
         end
 
         @inbounds for ir in 1:nr
-            last_row[ir] = Int32(ir - 1)
-            next_row[ir] = Int32(ir + 1)
+            last_row[ir] = (ir - 1) % Int32
+            next_row[ir] = (ir + 1) % Int32
             _add_link!(fc, ncnt, lcnt, ir, Int(nir[ir]))
         end
         @inbounds begin
-            last_row[row_end] = Int32(nr)
+            row_end32 = row_end % Int32
+            last_row[row_end] = nr % Int32
             next_row[row_end] = Int32(1)
             if nr > 0
-                last_row[1] = Int32(row_end)
-                next_row[nr] = Int32(row_end)
+                last_row[1] = row_end32
+                next_row[nr] = row_end32
             end
-            start_row[row_end] = Int32(num_el + 1)
+            start_row[row_end] = (num_el + 1) % Int32
         end
 
         @inbounds for ic in 1:nc
-            last_col[ic] = Int32(ic - 1)
-            next_col[ic] = Int32(ic + 1)
+            last_col[ic] = (ic - 1) % Int32
+            next_col[ic] = (ic + 1) % Int32
             _add_link!(fc, ncnt, lcnt, ic + nr, Int(nic[ic]))
         end
         @inbounds begin
-            last_col[col_end] = Int32(nc)
+            col_end32 = col_end % Int32
+            last_col[col_end] = nc % Int32
             next_col[col_end] = Int32(1)
             if nc > 0
-                last_col[1] = Int32(col_end)
-                next_col[nc] = Int32(col_end)
+                last_col[1] = col_end32
+                next_col[nc] = col_end32
             else
-                last_col[1] = Int32(col_end)
+                last_col[1] = col_end32
             end
-            start_col[col_end] = Int32(num_el + 1)
+            start_col[col_end] = (num_el + 1) % Int32
         end
     elseif state == 4
         piv_reg = lu.pivot_region
@@ -465,8 +470,8 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
                         first += 1
                     end
                 end
-                nicp[ic] = Int32(first - orig_first)
-                start_col[ic] = Int32(first)
+                nicp[ic] = (first - orig_first) % Int32
+                start_col[ic] = first % Int32
                 if largest > 0
                     idx_row[first] = start_row[largest]
                     el[first] = piv_reg[largest]
@@ -479,13 +484,13 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
                         first += 1
                     end
                 end
-                nic[ic] = Int32(first - Int(start_col[ic]))
+                nic[ic] = (first - Int(start_col[ic])) % Int32
             end
         end
 
         pos = 1
         @inbounds for ir in 1:nr
-            start_row[ir] = Int32(pos)
+            start_row[ir] = pos % Int32
             n = Int(nir[ir])
             if n > 0
                 nir[ir] = Int32(0)
@@ -495,12 +500,13 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
         @inbounds for ic in 1:nc
             num = Int(nic[ic])
             if num != 0
+                ic32 = ic % Int32
                 first = Int(start_col[ic])
                 for k in first:(first + num - 1)
                     ri = Int(idx_row[k])
                     lk = Int(nir[ri])
-                    nir[ri] = Int32(lk + 1)
-                    idx_col[Int(start_row[ri]) + lk] = Int32(ic)
+                    nir[ri] = (lk + 1) % Int32
+                    idx_col[Int(start_row[ri]) + lk] = ic32
                 end
             end
         end
@@ -522,19 +528,20 @@ function preprocess!(lu::SparseLU, state::Int)::Nothing
             end
         end
         @inbounds for ic in 1:nc
-            last_col[ic] = Int32(ic - 1)
-            next_col[ic] = Int32(ic + 1)
+            last_col[ic] = (ic - 1) % Int32
+            next_col[ic] = (ic + 1) % Int32
             _delete_link!(fc, ncnt, lcnt, ic + nr)
             _add_link!(fc, ncnt, lcnt, ic + nr, Int(nic[ic]))
         end
         @inbounds begin
-            last_col[col_end] = Int32(nc)
+            col_end32 = col_end % Int32
+            last_col[col_end] = nc % Int32
             next_col[col_end] = Int32(1)
-            last_col[1] = Int32(col_end)
+            last_col[1] = col_end32
             if nc > 0
-                next_col[nc] = Int32(col_end)
+                next_col[nc] = col_end32
             end
-            start_col[col_end] = Int32(num_el + 1)
+            start_col[col_end] = (num_el + 1) % Int32
         end
     end
     return nothing
@@ -574,10 +581,10 @@ function _pivot_row_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
 
     l = lu.len_l + 1
     @inbounds begin
-        lu.start_col_l[lu.ngood_l + 1] = Int32(l)
+        lu.start_col_l[lu.ngood_l + 1] = l % Int32
         lu.ngood_l += 1
         lu.len_l += num_do_col
-        lu.start_col_l[lu.ngood_l + 1] = Int32(lu.len_l + 1)
+        lu.start_col_l[lu.ngood_l + 1] = (lu.len_l + 1) % Int32
 
         piv_mult = 1.0 / el_u[piv_pos]
         lu.pivot_region[lu.ngood_u + 1] = piv_mult
@@ -585,8 +592,9 @@ function _pivot_row_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
         el_l = lu.element_l
         idx_row_l = lu.index_row_l
         for i in sc:(piv_pos - 1)
-            ir = Int(idx_row_u[i])
-            idx_row_l[l] = Int32(ir)
+            ir32 = idx_row_u[i]
+            ir = Int(ir32)
+            idx_row_l[l] = ir32
             el_l[l] = el_u[i] * piv_mult
             l += 1
             s = Int(start_row_u[ir])
@@ -598,13 +606,14 @@ function _pivot_row_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
             end
             idx_col_u[w] = idx_col_u[e]
             inir -= 1
-            nir[ir] = Int32(inir)
+            nir[ir] = inir % Int32
             _delete_link!(fc, ncnt, lcnt, ir)
             _add_link!(fc, ncnt, lcnt, ir, inir)
         end
         for i in (piv_pos + 1):end_col
-            ir = Int(idx_row_u[i])
-            idx_row_l[l] = Int32(ir)
+            ir32 = idx_row_u[i]
+            ir = Int(ir32)
+            idx_row_l[l] = ir32
             el_l[l] = el_u[i] * piv_mult
             l += 1
             s = Int(start_row_u[ir])
@@ -616,7 +625,7 @@ function _pivot_row_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
             end
             idx_col_u[w] = idx_col_u[e]
             inir -= 1
-            nir[ir] = Int32(inir)
+            nir[ir] = inir % Int32
             _delete_link!(fc, ncnt, lcnt, ir)
             _add_link!(fc, ncnt, lcnt, ir, inir)
         end
@@ -628,10 +637,10 @@ function _pivot_row_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
 
         nxt = Int(next_row[pivot_row])
         lst = Int(last_row[pivot_row])
-        next_row[lst] = Int32(nxt)
-        last_row[nxt] = Int32(lst)
+        next_row[lst] = nxt % Int32
+        last_row[nxt] = lst % Int32
         last_row[pivot_row] = LU_REMOVED
-        next_row[pivot_row] = Int32(lu.ngood_u + 1)
+        next_row[pivot_row] = (lu.ngood_u + 1) % Int32
     end
     return true
 end
@@ -670,9 +679,9 @@ function _pivot_col_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
 
         nxt = Int(next_row[pivot_row])
         lst = Int(last_row[pivot_row])
-        next_row[lst] = Int32(nxt)
-        last_row[nxt] = Int32(lst)
-        next_row[pivot_row] = Int32(lu.ngood_u + 1)
+        next_row[lst] = nxt % Int32
+        last_row[nxt] = lst % Int32
+        next_row[pivot_row] = (lu.ngood_u + 1) % Int32
         last_row[pivot_row] = LU_REMOVED
 
         lu.pivot_region[lu.ngood_u + 1] = 1.0 / el_u[sc]
@@ -718,7 +727,7 @@ function _pivot_col_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
                         el_u[largest] = val_save
                     end
                 end
-                nic[ic] = Int32(num)
+                nic[ic] = num % Int32
                 nicp[ic] += Int32(1)
                 start_col_u[ic] += Int32(1)
             end
@@ -728,7 +737,7 @@ function _pivot_col_singleton!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
         _delete_link!(fc, ncnt, lcnt, pivot_col + nr)
         nir[pivot_row] = Int32(0)
 
-        l_pos = Int32(lu.len_l + 1)
+        l_pos = (lu.len_l + 1) % Int32
         lu.start_col_l[lu.ngood_l + 1] = l_pos
         lu.ngood_l += 1
         lu.start_col_l[lu.ngood_l + 1] = l_pos
@@ -763,9 +772,9 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
 
         nxt = Int(next_row[pivot_row])
         lst = Int(last_row[pivot_row])
-        next_row[lst] = Int32(nxt)
-        last_row[nxt] = Int32(lst)
-        next_row[pivot_row] = Int32(lu.ngood_u + 1)
+        next_row[lst] = nxt % Int32
+        last_row[nxt] = lst % Int32
+        next_row[pivot_row] = (lu.ngood_u + 1) % Int32
         last_row[pivot_row] = LU_REMOVED
         nir[pivot_row] = Int32(0)
     end
@@ -776,26 +785,27 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
 
     @inbounds begin
         l = lu.len_l + 1
-        lu.start_col_l[lu.ngood_l + 1] = Int32(l)
+        lu.start_col_l[lu.ngood_l + 1] = l % Int32
         lu.ngood_l += 1
         lu.len_l += 1
-        lu.start_col_l[lu.ngood_l + 1] = Int32(lu.len_l + 1)
+        lu.start_col_l[lu.ngood_l + 1] = (lu.len_l + 1) % Int32
 
         if Int(idx_row_u[sc_piv]) == pivot_row
             piv_el = el_u[sc_piv]
             other_mult = el_u[sc_piv + 1]
-            other_row = Int(idx_row_u[sc_piv + 1])
+            other_row32 = idx_row_u[sc_piv + 1]
         else
             piv_el = el_u[sc_piv + 1]
             other_mult = el_u[sc_piv]
-            other_row = Int(idx_row_u[sc_piv])
+            other_row32 = idx_row_u[sc_piv]
         end
+        other_row = Int(other_row32)
         num_save = Int(nir[other_row])
         piv_mult = 1.0 / piv_el
         lu.pivot_region[lu.ngood_u + 1] = piv_mult
         nic[pivot_col] = Int32(0)
         other_mult *= piv_mult
-        lu.index_row_l[l] = Int32(other_row)
+        lu.index_row_l[l] = other_row32
         lu.element_l[l] = other_mult
 
         s_other = Int(start_row_u[other_row])
@@ -809,13 +819,16 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
 
         num_added = 0
         num_deleted = 0
+        pivot_row32 = pivot_row % Int32
 
         for j in sr_piv:er_piv
-            ic = Int(idx_col_u[j])
+            ic32 = idx_col_u[j]
+            ic = Int(ic32)
             ic == pivot_col && continue
             sc = Int(start_col_u[ic])
             ec = sc + Int(nic[ic]) - 1
-            ir = Int(idx_row_u[sc])
+            ir32 = idx_row_u[sc]
+            ir = Int(ir32)
             val = el_u[sc]
             found_other = false
 
@@ -826,25 +839,28 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
             largest = 0.0
 
             next_val = put <= ec ? el_u[put] : 0.0
-            next_ir = put <= ec ? Int(idx_row_u[put]) : 0
+            next_ir32 = put <= ec ? idx_row_u[put] : Int32(0)
+            next_ir = Int(next_ir32)
 
             if ir != pivot_row
                 if ir != other_row
                     largest = abs(val)
                     el_u[put] = val
-                    idx_row_u[put] = Int32(ir)
+                    idx_row_u[put] = ir32
                     pos_largest = put
                     put += 1
                     for i in (sc + 1):ec
+                        ir32 = next_ir32
                         ir = next_ir
                         val = next_val
                         if i < ec
-                            next_ir = Int(idx_row_u[i + 1])
+                            next_ir32 = idx_row_u[i + 1]
+                            next_ir = Int(next_ir32)
                             next_val = el_u[i + 1]
                         end
                         if ir != pivot_row
                             if ir != other_row
-                                idx_row_u[put] = Int32(ir)
+                                idx_row_u[put] = ir32
                                 el_u[put] = val
                                 put += 1
                             else
@@ -859,14 +875,16 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
                     other_el = val
                     found_other = true
                     for i in (sc + 1):ec
+                        ir32 = next_ir32
                         ir = next_ir
                         val = next_val
                         if i < ec
-                            next_ir = Int(idx_row_u[i + 1])
+                            next_ir32 = idx_row_u[i + 1]
+                            next_ir = Int(next_ir32)
                             next_val = el_u[i + 1]
                         end
                         if ir != pivot_row
-                            idx_row_u[put] = Int32(ir)
+                            idx_row_u[put] = ir32
                             el_u[put] = val
                             av = abs(val)
                             if av > largest
@@ -882,14 +900,16 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
             else
                 this_piv_val = val
                 for i in (sc + 1):ec
+                    ir32 = next_ir32
                     ir = next_ir
                     val = next_val
                     if i < ec
-                        next_ir = Int(idx_row_u[i + 1])
+                        next_ir32 = idx_row_u[i + 1]
+                        next_ir = Int(next_ir32)
                         next_val = el_u[i + 1]
                     end
                     if ir != other_row
-                        idx_row_u[put] = Int32(ir)
+                        idx_row_u[put] = ir32
                         el_u[put] = val
                         av = abs(val)
                         if av > largest
@@ -905,18 +925,18 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
             end
 
             el_u[sc] = this_piv_val
-            idx_row_u[sc] = Int32(pivot_row)
+            idx_row_u[sc] = pivot_row32
             sc += 1
-            nic[ic] = Int32(put - sc)
+            nic[ic] = (put - sc) % Int32
             nicp[ic] += Int32(1)
-            start_col_u[ic] = Int32(sc)
+            start_col_u[ic] = sc % Int32
 
             other_el = _lu_fmsub(this_piv_val, other_mult, other_el)
             av = abs(other_el)
             if av > tol
                 if !found_other
                     num_added += 1
-                    save_col[num_added] = Int32(ic)
+                    save_col[num_added] = ic32
                     nxt_c = Int(next_col[ic])
                     sp = Int(start_col_u[nxt_c]) - put - Int(nicp[nxt_c])
                     if sp <= 0
@@ -933,7 +953,7 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
                     end
                 end
                 el_u[put] = other_el
-                idx_row_u[put] = Int32(other_row)
+                idx_row_u[put] = other_row32
                 if av > largest
                     largest = av
                     pos_largest = put
@@ -950,7 +970,7 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
             end
 
             new_nic = put - sc
-            nic[ic] = Int32(new_nic)
+            nic[ic] = new_nic % Int32
             if pos_largest > 0
                 v_l = el_u[pos_largest]
                 r_l = idx_row_u[pos_largest]
@@ -971,13 +991,13 @@ function _pivot_one_other_row!(lu::SparseLU, pivot_row::Int, pivot_col::Int)::Bo
         lu.total_elements += num_added - num_deleted
         number = num_added + cur_len
         if sp < num_added
-            nir[other_row] = Int32(cur_len)
+            nir[other_row] = cur_len % Int32
             if !_get_row_space!(lu, other_row, number)
                 return false
             end
             e_other = Int(start_row_u[other_row]) + cur_len - 1
         end
-        nir[other_row] = Int32(number)
+        nir[other_row] = number % Int32
         if number != num_save
             _delete_link!(fc, ncnt, lcnt, other_row)
             _add_link!(fc, ncnt, lcnt, other_row, number)
@@ -1060,9 +1080,9 @@ function _pivot_general!(
 
         nxt = Int(next_row[pivot_row])
         lst = Int(last_row[pivot_row])
-        next_row[lst] = Int32(nxt)
-        last_row[nxt] = Int32(lst)
-        next_row[pivot_row] = Int32(lu.ngood_u + 1)
+        next_row[lst] = nxt % Int32
+        last_row[nxt] = lst % Int32
+        next_row[pivot_row] = (lu.ngood_u + 1) % Int32
         last_row[pivot_row] = LU_REMOVED
         nir[pivot_row] = Int32(0)
     end
@@ -1074,20 +1094,21 @@ function _pivot_general!(
     @inbounds begin
         l_save = lu.len_l + 1
         l = l_save
-        lu.start_col_l[lu.ngood_l + 1] = Int32(l)
+        lu.start_col_l[lu.ngood_l + 1] = l % Int32
         lu.ngood_l += 1
         lu.len_l += num_in_piv_col
-        lu.start_col_l[lu.ngood_l + 1] = Int32(lu.len_l + 1)
+        lu.start_col_l[lu.ngood_l + 1] = (lu.len_l + 1) % Int32
 
         prp = pivot_row_pos
         if prp <= 0
             prp = sc_piv
             while prp <= ec_piv
-                ir = Int(idx_row_u[prp])
+                ir32 = idx_row_u[prp]
+                ir = Int(ir32)
                 if ir != pivot_row
-                    idx_row_l[l] = Int32(ir)
+                    idx_row_l[l] = ir32
                     el_l[l] = el_u[prp]
-                    mark_row[ir] = TMark(l - l_save)
+                    mark_row[ir] = (l - l_save) % TMark
                     l += 1
                     s = Int(start_row_u[ir])
                     cur_nir = Int(nir[ir])
@@ -1097,7 +1118,7 @@ function _pivot_general!(
                         w += 1
                     end
                     idx_col_u[w] = idx_col_u[e]
-                    nir[ir] = Int32(cur_nir - 1)
+                    nir[ir] = (cur_nir - 1) % Int32
                 else
                     break
                 end
@@ -1105,9 +1126,10 @@ function _pivot_general!(
             end
         else
             for i in sc_piv:(prp - 1)
-                ir = Int(idx_row_u[i])
-                mark_row[ir] = TMark(l - l_save)
-                idx_row_l[l] = Int32(ir)
+                ir32 = idx_row_u[i]
+                ir = Int(ir32)
+                mark_row[ir] = (l - l_save) % TMark
+                idx_row_l[l] = ir32
                 el_l[l] = el_u[i]
                 l += 1
                 s = Int(start_row_u[ir])
@@ -1118,16 +1140,17 @@ function _pivot_general!(
                     w += 1
                 end
                 idx_col_u[w] = idx_col_u[e]
-                nir[ir] = Int32(cur_nir - 1)
+                nir[ir] = (cur_nir - 1) % Int32
             end
         end
 
         piv_mult = 1.0 / el_u[prp]
         lu.pivot_region[lu.ngood_u + 1] = piv_mult
         for i in (prp + 1):ec_piv
-            ir = Int(idx_row_u[i])
-            mark_row[ir] = TMark(l - l_save)
-            idx_row_l[l] = Int32(ir)
+            ir32 = idx_row_u[i]
+            ir = Int(ir32)
+            mark_row[ir] = (l - l_save) % TMark
+            idx_row_l[l] = ir32
             el_l[l] = el_u[i]
             l += 1
             s = Int(start_row_u[ir])
@@ -1138,10 +1161,10 @@ function _pivot_general!(
                 w += 1
             end
             idx_col_u[w] = idx_col_u[e]
-            nir[ir] = Int32(cur_nir - 1)
+            nir[ir] = (cur_nir - 1) % Int32
         end
 
-        mark_row[pivot_row] = TMark(large_int)
+        mark_row[pivot_row] = large_int % TMark
         nic[pivot_col] = Int32(0)
 
         l_base = l_save - 1
@@ -1157,6 +1180,7 @@ function _pivot_general!(
         added = num_in_piv_row * num_in_piv_col
         large_unset = large_int + Int32(1)
         temp2_base = 0
+        pivot_row32 = pivot_row % Int32
 
         for jcol in 1:num_in_piv_row
             ic = Int(save_col[jcol])
@@ -1189,11 +1213,12 @@ function _pivot_general!(
             end
 
             for i in (sc + 1):ec
-                ir = Int(idx_row_u[i])
+                ir32 = idx_row_u[i]
+                ir = Int(ir32)
                 val = el_u[i]
                 mark = Int32(mark_row[ir])
                 if mark == large_unset
-                    idx_row_u[put] = Int32(ir)
+                    idx_row_u[put] = ir32
                     el_u[put] = val
                     if check_largest
                         av = abs(val)
@@ -1221,11 +1246,11 @@ function _pivot_general!(
             end
             put += 1
             el_u[sc] = this_piv_val
-            idx_row_u[sc] = Int32(pivot_row)
+            idx_row_u[sc] = pivot_row32
             sc += 1
-            nic[ic] = Int32(put - sc)
+            nic[ic] = (put - sc) % Int32
             nicp[ic] += Int32(1)
-            start_col_u[ic] = Int32(sc)
+            start_col_u[ic] = sc % Int32
 
             nxt_c = Int(next_col[ic])
             sp = Int(start_col_u[nxt_c]) - put - Int(nicp[nxt_c])
@@ -1270,7 +1295,7 @@ function _pivot_general!(
                             w += 1
                         end
                         idx_col_u[w] = idx_col_u[e]
-                        nir[ir_j] = Int32(cur_nir - 1)
+                        nir[ir_j] = (cur_nir - 1) % Int32
                     else
                         work2[temp2_base + word] = wval | mask
                     end
@@ -1278,7 +1303,7 @@ function _pivot_general!(
             end
 
             new_nic = put - sc
-            nic[ic] = Int32(new_nic)
+            nic[ic] = new_nic % Int32
             if pos_largest > 0
                 v_l = el_u[pos_largest]
                 r_l = idx_row_u[pos_largest]
@@ -1295,7 +1320,7 @@ function _pivot_general!(
         end
 
         # Update row lists and Markowitz row counts from work2 bitmask
-        unset_mark = TMark(large_unset)
+        unset_mark = large_unset % TMark
         for i in 1:num_in_piv_col
             im1 = i - 1
             word_off = (im1 >> 5) + 1
@@ -1330,7 +1355,7 @@ function _pivot_general!(
             idx_col_u[nxt_sr] = save_idx
             mark_row[ir] = unset_mark
             new_nir = e - sr_i
-            nir[ir] = Int32(new_nir)
+            nir[ir] = new_nir % Int32
             _delete_link!(fc, ncnt, lcnt, ir)
             _add_link!(fc, ncnt, lcnt, ir, new_nir)
         end
@@ -1368,7 +1393,7 @@ function _factor_sparse_impl!(
     @inbounds for i in 1:nr
         work[i] = 0.0
     end
-    unset_val = TMark(mark_unset)
+    unset_val = mark_unset % TMark
     @inbounds for i in 1:nr
         mark_row[i] = unset_val
     end
@@ -1401,9 +1426,9 @@ function _factor_sparse_impl!(
                         lu.total_elements -= cur_nir
                         nxt = Int(next_row[ir])
                         lst = Int(last_row[ir])
-                        next_row[lst] = Int32(nxt)
-                        last_row[nxt] = Int32(lst)
-                        next_row[ir] = Int32(lu.ngood_u + 1)
+                        next_row[lst] = nxt % Int32
+                        last_row[nxt] = lst % Int32
+                        next_row[ir] = (lu.ngood_u + 1) % Int32
                         last_row[ir] = LU_REMOVED
                         _delete_link!(fc, ncnt, lcnt, ir)
                         nir[ir] = Int32(-1)
@@ -1411,7 +1436,7 @@ function _factor_sparse_impl!(
                         lu.ngood_l += 1
                         start_col_l[lu.ngood_l + 1] = Int32(1)
                         lu.ngood_u += 1
-                        piv_col[lu.ngood_u] = Int32(ipc)
+                        piv_col[lu.ngood_u] = ipc % Int32
                     end
                 end
             end
@@ -1568,7 +1593,7 @@ function _factor_sparse_impl!(
             end
 
             lu.ngood_u += 1
-            @inbounds piv_col[lu.ngood_u] = Int32(i_piv_col)
+            @inbounds piv_col[lu.ngood_u] = i_piv_col % Int32
             if lu.ngood_u == nr
                 break
             end
@@ -1652,9 +1677,9 @@ function _factor_dense!(lu::SparseLU)::Int
     @inbounds for i in 1:nr
         if last_row[i] == Int32(0)
             which += 1
-            last_row[i] = Int32(which)
-            next_row[i] = Int32(lu.ngood_u + which)
-            dense_perm[which] = Int32(i)
+            last_row[i] = which % Int32
+            next_row[i] = (lu.ngood_u + which) % Int32
+            dense_perm[which] = i % Int32
         end
     end
 
@@ -1674,11 +1699,11 @@ function _factor_dense!(lu::SparseLU)::Int
                 rows_done += 1
             end
             lu.ngood_u += 1
-            next_row[rows_done] = Int32(lu.ngood_u)
+            next_row[rows_done] = lu.ngood_u % Int32
             rows_done += 1
             start_col_l[lu.ngood_u + 1] = end_l
             nic[ic] = Int32(0)
-            piv_col[lu.ngood_u] = Int32(ic)
+            piv_col[lu.ngood_u] = ic % Int32
             piv_reg[lu.ngood_u] = 1.0
         end
     end
@@ -1885,7 +1910,7 @@ function _cleanup!(lu::SparseLU)::Nothing
     permute_back = lu.permute_back
     @inbounds for i in 1:nr
         ir = Int(permute[i])
-        permute_back[ir] = Int32(i)
+        permute_back[ir] = i % Int32
     end
 
     # Shift start_col_u back to column start
@@ -1893,7 +1918,7 @@ function _cleanup!(lu::SparseLU)::Nothing
     @inbounds for i in 1:nc
         num = Int(nic[i])
         total_elements += num
-        start_col_u[i] -= Int32(num)
+        start_col_u[i] -= num % Int32
     end
 
     piv_col = lu.pivot_col
@@ -1905,10 +1930,10 @@ function _cleanup!(lu::SparseLU)::Nothing
     num_u = 0
     @inbounds for i in 1:nc
         ic = Int(piv_col[i])
-        piv_col_b[ic] = Int32(i)
+        piv_col_b[ic] = i % Int32
         if ic > 0
             num_u += 1
-            nicp[ic] = num_u != ic ? Int32(num_u) : LU_NO_LINK
+            nicp[ic] = num_u != ic ? (num_u % Int32) : LU_NO_LINK
         end
     end
 
@@ -1940,7 +1965,7 @@ function _cleanup!(lu::SparseLU)::Nothing
         s = Int(start_col_u[i])
         e = s + Int(nic[i]) - 1
         for j in s:e
-            idx_col_u[j] = Int32(k)
+            idx_col_u[j] = k % Int32
             k += 1
         end
     end
@@ -1970,11 +1995,11 @@ function _cleanup!(lu::SparseLU)::Nothing
     end
     k = 1
     @inbounds for i in (num_slacks + 1):nr
-        start_col_u[i] = Int32(k)
+        start_col_u[i] = k % Int32
         k += Int(nic[i])
     end
     max_u = k - 1
-    @inbounds start_col_u[col_end] = Int32(k)
+    @inbounds start_col_u[col_end] = k % Int32
 
     total_elements += lu.ndense * lu.ndense + lu.len_l
     next_col = lu.next_col
@@ -1983,16 +2008,17 @@ function _cleanup!(lu::SparseLU)::Nothing
     use_extra_r = !(max_u > 10 * nr || nr < 200)
     if use_extra_r
         @inbounds for i in 1:nc
-            last_col[i] = Int32(i - 1)
-            next_col[i] = Int32(i + 1)
+            last_col[i] = (i - 1) % Int32
+            next_col[i] = (i + 1) % Int32
         end
         @inbounds begin
+            col_end32 = col_end % Int32
             if nc > 0
-                next_col[nc] = Int32(col_end)
+                next_col[nc] = col_end32
             end
-            last_col[col_end] = Int32(nc)
+            last_col[col_end] = nc % Int32
             next_col[col_end] = Int32(1)
-            last_col[1] = Int32(col_end)
+            last_col[1] = col_end32
         end
     end
 
@@ -2021,39 +2047,41 @@ function _cleanup!(lu::SparseLU)::Nothing
     start_row = lu.start_row_u
     pos = 1
     @inbounds for ir in 1:nr
-        start_row[ir] = Int32(pos)
+        start_row[ir] = pos % Int32
         pos += Int(nir[ir])
         nir[ir] = Int32(0)
     end
 
     @inbounds for i in (num_slacks + 1):nr
+        i32 = i % Int32
         s = Int(start_col_u[i])
         e = s + Int(nic[i]) - 1
         pv = piv_reg[i]
         for j in s:e
             ir = Int(idx_row_u[j])
             lk = Int(nir[ir])
-            nir[ir] = Int32(lk + 1)
+            nir[ir] = (lk + 1) % Int32
             kk = Int(start_row[ir]) + lk
-            idx_col_u[kk] = Int32(i)
-            conv[kk] = Int32(j)
+            idx_col_u[kk] = i32
+            conv[kk] = j % Int32
             el_u[j] *= pv
         end
     end
 
     last_row = lu.last_row
     @inbounds for j in 1:nr
-        last_row[j] = Int32(j - 1)
-        next_row[j] = Int32(j + 1)
+        last_row[j] = (j - 1) % Int32
+        next_row[j] = (j + 1) % Int32
     end
     @inbounds begin
+        row_end32 = row_end % Int32
         if nr > 0
-            next_row[nr] = Int32(row_end)
-            last_row[1] = Int32(row_end)
+            next_row[nr] = row_end32
+            last_row[1] = row_end32
         end
-        last_row[row_end] = Int32(nr)
+        last_row[row_end] = nr % Int32
         next_row[row_end] = Int32(1)
-        start_row[row_end] = Int32(pos)
+        start_row[row_end] = pos % Int32
     end
 
     # Permute L row indices & find base_l (0-based count of empty leading L cols)
@@ -2227,21 +2255,22 @@ function go_sparse!(lu::SparseLU)::Nothing
     @inbounds for i in 1:nr
         n_r = Int(start_row_l[i])
         cnt += n_r
-        start_row_l[i] = Int32(cnt)
+        start_row_l[i] = cnt % Int32
     end
-    @inbounds start_row_l[nr + 1] = Int32(cnt)
+    @inbounds start_row_l[nr + 1] = cnt % Int32
 
     el_row_l = lu.element_row_l
     idx_col_l = lu.index_col_l
     @inbounds for i in end_col:-1:base
+        i32 = i % Int32
         s = Int(start_col_l[i])
         e = Int(start_col_l[i + 1]) - 1
         for j in s:e
             ir = Int(idx_row_l[j])
             pos = Int(start_row_l[ir]) - 1
-            start_row_l[ir] = Int32(pos)
+            start_row_l[ir] = pos % Int32
             el_row_l[pos] = el_l[j]
-            idx_col_l[pos] = Int32(i)
+            idx_col_l[pos] = i32
         end
     end
     return nothing

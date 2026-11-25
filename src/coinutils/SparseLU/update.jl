@@ -54,7 +54,7 @@ function _get_row_space_iterate!(lu::SparseLU, i_row::Int, extra_needed::Int)::B
         @inbounds while r != row_end
             g = Int(start_row[r])
             ge = g + Int(len_row[r]) - 1
-            start_row[r] = Int32(put)
+            start_row[r] = put % Int32
             for i in g:ge
                 idx_col[put] = idx_col[i]
                 row_to_col[put] = row_to_col[i]
@@ -63,7 +63,7 @@ function _get_row_space_iterate!(lu::SparseLU, i_row::Int, extra_needed::Int)::B
             r = Int(next_row[r])
         end
         lu.ncompressions += 1
-        @inbounds start_row[row_end] = Int32(put)
+        @inbounds start_row[row_end] = put % Int32
         space = (lu.len_area_u + 1) - put
         if space < extra_needed + number + 2
             lu.status = -99
@@ -80,19 +80,19 @@ function _get_row_space_iterate!(lu::SparseLU, i_row::Int, extra_needed::Int)::B
         last_row[Int(nxt)] = lst
 
         lst2 = last_row[row_end]
-        next_row[Int(lst2)] = Int32(i_row)
-        last_row[row_end] = Int32(i_row)
+        next_row[Int(lst2)] = i_row % Int32
+        last_row[row_end] = i_row % Int32
         last_row[i_row] = lst2
-        next_row[i_row] = Int32(row_end)
+        next_row[i_row] = row_end % Int32
 
         g = Int(start_row[i_row])
-        start_row[i_row] = Int32(put)
+        start_row[i_row] = put % Int32
         for k in 0:(number - 1)
             idx_col[put + k] = idx_col[g + k]
             row_to_col[put + k] = row_to_col[g + k]
         end
         put += number
-        start_row[row_end] = Int32(put + extra_needed + 4)
+        start_row[row_end] = (put + extra_needed + 4) % Int32
     end
     return true
 end
@@ -349,9 +349,9 @@ function replace_column!(
                 end
                 put = Int(start_row_u[ir]) + inir
             end
-            idx_col_u[put] = Int32(new_col)
-            row_to_col[put] = Int32(u_base + i)
-            len_row_u[ir] = Int32(inir + 1)
+            idx_col_u[put] = new_col % Int32
+            row_to_col[put] = (u_base + i) % Int32
+            len_row_u[ir] = (inir + 1) % Int32
             save_from_u = _lu_fmsub(ev, region[ir], save_from_u)
         else
             save_from_u += ev

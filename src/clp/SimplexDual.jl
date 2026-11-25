@@ -62,7 +62,7 @@ function _dual_col0_fast_section!(
                     end
                     number_remaining += 1
                     spare_val[number_remaining] = alpha_val * mult
-                    spare_idx[number_remaining] = Int32(jseq)
+                    spare_idx[number_remaining] = jseq % Int32
                 end
             end
         end
@@ -147,7 +147,7 @@ function _dual_col0_full_section!(
                 end
                 number_remaining += 1
                 spare_val[number_remaining] = alpha_val
-                spare_idx[number_remaining] = Int32(jseq)
+                spare_idx[number_remaining] = jseq % Int32
             end
         elseif st == CLP_STATUS_AT_LOWER
             alpha_val = work[i]
@@ -160,7 +160,7 @@ function _dual_col0_full_section!(
                 end
                 number_remaining += 1
                 spare_val[number_remaining] = alpha_val
-                spare_idx[number_remaining] = Int32(jseq)
+                spare_idx[number_remaining] = jseq % Int32
             end
         end
     end
@@ -435,7 +435,8 @@ function clp_dual_column!(
             int_cur = i_flip == 0 ? interesting_0 : interesting_1
 
             for i in 1:int_cur
-                iseq = Int(cur_idx[i])
+                iseq32 = cur_idx[i]
+                iseq = Int(iseq32)
                 alpha_val = cur_val[i]
                 old_val = dj[iseq]
                 val = _sd_fmsub(tentative_theta, alpha_val, old_val)
@@ -447,7 +448,7 @@ function clp_dual_column!(
                         increase_in_this = _sd_fmsub(old_val + dual_tol, rng, increase_in_this)
                         number_possibly_swapped -= 1
                         next_val[number_possibly_swapped] = alpha_val
-                        next_idx[number_possibly_swapped] = Int32(iseq)
+                        next_idx[number_possibly_swapped] = iseq32
                         if abs(alpha_val) > best_pivot
                             best_pivot = abs(alpha_val)
                             best_sequence = number_possibly_swapped
@@ -459,7 +460,7 @@ function clp_dual_column!(
                         end
                         number_remaining += 1
                         next_val[number_remaining] = alpha_val
-                        next_idx[number_remaining] = Int32(iseq)
+                        next_idx[number_remaining] = iseq32
                     end
                 else
                     if val < -new_tolerance
@@ -468,7 +469,7 @@ function clp_dual_column!(
                         increase_in_this = _sd_fmadd(old_val - dual_tol, rng, increase_in_this)
                         number_possibly_swapped -= 1
                         next_val[number_possibly_swapped] = alpha_val
-                        next_idx[number_possibly_swapped] = Int32(iseq)
+                        next_idx[number_possibly_swapped] = iseq32
                         if abs(alpha_val) > best_pivot
                             best_pivot = abs(alpha_val)
                             best_sequence = number_possibly_swapped
@@ -480,7 +481,7 @@ function clp_dual_column!(
                         end
                         number_remaining += 1
                         next_val[number_remaining] = alpha_val
-                        next_idx[number_remaining] = Int32(iseq)
+                        next_idx[number_remaining] = iseq32
                     end
                 end
             end
@@ -552,7 +553,8 @@ function clp_dual_column!(
                     upper_theta *= 1.0000000001
 
                     for i in 1:int_cur
-                        iseq = Int(cur_idx[i])
+                        iseq32 = cur_idx[i]
+                        iseq = Int(iseq32)
                         alpha_val = cur_val[i]
                         dj_val = dj[iseq]
                         val = _sd_fmsub(upper_theta, alpha_val, dj_val)
@@ -574,11 +576,11 @@ function clp_dual_column!(
                         if !add_to_swapped
                             number_remaining += 1
                             next_val[number_remaining] = alpha_val
-                            next_idx[number_remaining] = Int32(iseq)
+                            next_idx[number_remaining] = iseq32
                         else
                             number_possibly_swapped -= 1
                             next_val[number_possibly_swapped] = alpha_val
-                            next_idx[number_possibly_swapped] = Int32(iseq)
+                            next_idx[number_possibly_swapped] = iseq32
                             abs_alpha = abs(alpha_val)
                             take = abs_alpha > best_pivot
 
@@ -978,7 +980,8 @@ function _update_duals_inc_rows!(
 )::Tuple{Int,Int,Float64}
     n_infeas = 0
     @inbounds for i in 1:row_nnz
-        irow = Int(row_idx[i])
+        irow32 = row_idx[i]
+        irow = Int(irow32)
         alpha_i = row_val[i]
         row_val[i] = 0.0
         true_seq = irow + ncols
@@ -991,7 +994,7 @@ function _update_duals_inc_rows!(
                 if val * mult < -tol
                     movement = mult * (lower[true_seq] - upper[true_seq])
                     n_infeas += 1
-                    row_idx[n_infeas] = Int32(irow)
+                    row_idx[n_infeas] = irow32
                     change_obj = _sd_fmsub(movement, cost[true_seq], change_obj)
                     out_nnz = _quick_add!(out_idx, out_val, out_nnz, irow, movement)
                 end
@@ -1027,7 +1030,8 @@ function _update_duals_inc_cols!(
     n_infeas = 0
     @inbounds if (more_special_options & 8) != 0
         for i in 1:col_nnz
-            icol = Int(col_idx[i])
+            icol32 = col_idx[i]
+            icol = Int(icol32)
             alpha_i = col_val[i]
             col_val[i] = 0.0
             st3 = status[icol] & UInt8(3)
@@ -1039,7 +1043,7 @@ function _update_duals_inc_cols!(
                     if val * mult < -tol
                         movement = mult * (upper[icol] - lower[icol])
                         n_infeas += 1
-                        col_idx[n_infeas] = Int32(icol)
+                        col_idx[n_infeas] = icol32
                         change_obj = _sd_fmadd(movement, cost[icol], change_obj)
                         out_nnz = clp_mat_add_indexed!(
                             mat_starts, mat_lengths, mat_indices, mat_elements,
@@ -1052,7 +1056,8 @@ function _update_duals_inc_cols!(
         end
     else
         for i in 1:col_nnz
-            icol = Int(col_idx[i])
+            icol32 = col_idx[i]
+            icol = Int(icol32)
             alpha_i = col_val[i]
             col_val[i] = 0.0
             st = _sd_get_status(status[icol])
@@ -1061,7 +1066,7 @@ function _update_duals_inc_cols!(
                 dj[icol] = val
                 if val < -tol
                     n_infeas += 1
-                    col_idx[n_infeas] = Int32(icol)
+                    col_idx[n_infeas] = icol32
                     movement = upper[icol] - lower[icol]
                     change_obj = _sd_fmadd(movement, cost[icol], change_obj)
                     out_nnz = clp_mat_add_indexed!(
@@ -1075,7 +1080,7 @@ function _update_duals_inc_cols!(
                 dj[icol] = val
                 if val > tol
                     n_infeas += 1
-                    col_idx[n_infeas] = Int32(icol)
+                    col_idx[n_infeas] = icol32
                     movement = lower[icol] - upper[icol]
                     change_obj = _sd_fmadd(movement, cost[icol], change_obj)
                     out_nnz = clp_mat_add_indexed!(
@@ -1202,7 +1207,7 @@ function _update_duals_full!(
             )
             if flipped
                 n_row_infeas += 1
-                row_idx[n_row_infeas] = Int32(irow)
+                row_idx[n_row_infeas] = irow % Int32
                 out_nnz = _quick_add!(out_idx, out_val, out_nnz, irow, -movement)
             end
         elseif st == CLP_STATUS_AT_LOWER
@@ -1212,7 +1217,7 @@ function _update_duals_full!(
             )
             if flipped
                 n_row_infeas += 1
-                row_idx[n_row_infeas] = Int32(irow)
+                row_idx[n_row_infeas] = irow % Int32
                 out_nnz = _quick_add!(out_idx, out_val, out_nnz, irow, -movement)
             end
         end
@@ -1229,7 +1234,7 @@ function _update_duals_full!(
             )
             if flipped
                 n_col_infeas += 1
-                col_idx[n_col_infeas] = Int32(icol)
+                col_idx[n_col_infeas] = icol % Int32
                 out_nnz = clp_mat_add_indexed!(
                     mat_starts, mat_lengths, mat_indices, mat_elements,
                     icol, movement, row_scale, col_scale,
@@ -1243,7 +1248,7 @@ function _update_duals_full!(
             )
             if flipped
                 n_col_infeas += 1
-                col_idx[n_col_infeas] = Int32(icol)
+                col_idx[n_col_infeas] = icol % Int32
                 out_nnz = clp_mat_add_indexed!(
                     mat_starts, mat_lengths, mat_indices, mat_elements,
                     icol, movement, row_scale, col_scale,

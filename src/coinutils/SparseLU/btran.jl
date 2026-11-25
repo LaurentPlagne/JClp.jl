@@ -17,7 +17,7 @@
         if v != 0.0
             if abs(v) > tol
                 count += 1
-                indices[nnz + count] = Int32(i)
+                indices[nnz + count] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -62,7 +62,8 @@ function btran_pfi!(
     nnz = nnz_in
     @inbounds for p in lu.npivots:-1:1
         k = nr + p
-        prow = Int(piv_col[k])
+        prow32 = piv_col[k]
+        prow = Int(prow32)
         pval = region[prow] * piv_reg[k]
         js = Int(start_col[k])
         je = Int(start_col[k + 1]) - 1
@@ -72,7 +73,7 @@ function btran_pfi!(
         if abs(pval) > tol
             if region[prow] == 0.0
                 nnz += 1
-                indices[nnz] = Int32(prow)
+                indices[nnz] = prow32
             end
             region[prow] = pval
         elseif region[prow] != 0.0
@@ -111,7 +112,7 @@ function btran_u_densish!(
                     region[ir] = _lu_fmsub(el_u[ge], pval, region[ir])
                 end
                 nnz += 1
-                indices[nnz] = Int32(i)
+                indices[nnz] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -161,7 +162,7 @@ function btran_u_sparsish!(
                         region[ir] = _lu_fmsub(el_u[ge], pval, region[ir])
                     end
                     nnz += 1
-                    indices[nnz] = Int32(ii)
+                    indices[nnz] = ii % Int32
                 else
                     region[ii] = 0.0
                 end
@@ -184,7 +185,7 @@ function btran_u_sparsish!(
                     region[ir] = _lu_fmsub(el_u[ge], pval, region[ir])
                 end
                 nnz += 1
-                indices[nnz] = Int32(ii)
+                indices[nnz] = ii % Int32
             else
                 region[ii] = 0.0
             end
@@ -214,9 +215,10 @@ function btran_u_sparse!(
 
     n_list = 0
     @inbounds for k in 1:nnz_in
-        kpiv = Int(indices[k])
-        stack[1] = Int32(kpiv)
-        next[1] = Int32(Int(start_row[kpiv]) + Int(len_row[kpiv]) - 1)
+        kpiv32 = indices[k]
+        kpiv = Int(kpiv32)
+        stack[1] = kpiv32
+        next[1] = (Int(start_row[kpiv]) + Int(len_row[kpiv]) - 1) % Int32
         n_stack = 1
         while n_stack > 0
             kpiv = Int(stack[n_stack])
@@ -224,20 +226,21 @@ function btran_u_sparse!(
             if mark[kpiv] != UInt8(1)
                 j = Int(next[n_stack + 1])
                 if j >= Int(start_row[kpiv])
-                    next_kpiv = Int(idx_col[j])
+                    next_kpiv32 = idx_col[j]
+                    next_kpiv = Int(next_kpiv32)
                     j -= 1
                     n_stack += 1
-                    next[n_stack] = Int32(j)
+                    next[n_stack] = j % Int32
                     if mark[next_kpiv] == UInt8(0)
                         j2 = Int(start_row[next_kpiv]) + Int(len_row[next_kpiv]) - 1
                         n_stack += 1
-                        stack[n_stack] = Int32(next_kpiv)
+                        stack[n_stack] = next_kpiv32
                         mark[next_kpiv] = UInt8(2)
-                        next[n_stack] = Int32(j2)
+                        next[n_stack] = j2 % Int32
                     end
                 else
                     n_list += 1
-                    list[n_list] = Int32(kpiv)
+                    list[n_list] = kpiv % Int32
                     mark[kpiv] = UInt8(1)
                 end
             end
@@ -246,7 +249,8 @@ function btran_u_sparse!(
 
     nnz = 0
     @inbounds for i in n_list:-1:1
-        ipiv = Int(list[i])
+        ipiv32 = list[i]
+        ipiv = Int(ipiv32)
         mark[ipiv] = UInt8(0)
         pval = region[ipiv]
         if abs(pval) > tol
@@ -258,7 +262,7 @@ function btran_u_sparse!(
                 region[ir] = _lu_fmsub(el_u[ge], pval, region[ir])
             end
             nnz += 1
-            indices[nnz] = Int32(ipiv)
+            indices[nnz] = ipiv32
         else
             region[ipiv] = 0.0
         end
@@ -339,11 +343,12 @@ function btran_r_sparse!(
 
     nnz = nnz_in
     @inbounds for i in 1:nnz
-        pos_map[Int(indices[i])] = Int32(i)
+        pos_map[Int(indices[i])] = i % Int32
     end
 
     @inbounds for i in lu.nrows_extra:-1:(nr + 1)
-        put_row = Int(perm[i])
+        put_row32 = perm[i]
+        put_row = Int(put_row32)
         pval = region[i]
         region[i] = 0.0
         if pval != 0.0
@@ -351,7 +356,8 @@ function btran_r_sparse!(
             js = Int(start_col[k])
             je = Int(start_col[k + 1]) - 1
             for j in js:je
-                ir = Int(idx_row[j])
+                ir32 = idx_row[j]
+                ir = Int(ir32)
                 old_v = region[ir]
                 new_v = _lu_fmsub(el_r[j], pval, old_v)
                 if old_v != 0.0
@@ -359,14 +365,14 @@ function btran_r_sparse!(
                 elseif abs(new_v) > tol
                     region[ir] = new_v
                     nnz += 1
-                    pos_map[ir] = Int32(nnz)
-                    indices[nnz] = Int32(ir)
+                    pos_map[ir] = nnz % Int32
+                    indices[nnz] = ir32
                 end
             end
             region[put_row] = pval
             pos = Int(pos_map[i])
-            indices[pos] = Int32(put_row)
-            pos_map[put_row] = Int32(pos)
+            indices[pos] = put_row32
+            pos_map[put_row] = pos % Int32
         end
     end
     return nnz
@@ -434,7 +440,7 @@ function btran_l_densish!(
             if abs(pval) > tol
                 region[i] = pval
                 nnz += 1
-                indices[nnz] = Int32(i)
+                indices[nnz] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -444,7 +450,7 @@ function btran_l_densish!(
             pval = region[i]
             if abs(pval) > tol
                 nnz += 1
-                indices[nnz] = Int32(i)
+                indices[nnz] = i % Int32
             else
                 region[i] = 0.0
             end
@@ -474,7 +480,7 @@ function btran_l_by_row!(
         if pval != 0.0
             if abs(pval) > tol
                 nnz += 1
-                indices[nnz] = Int32(i)
+                indices[nnz] = i % Int32
                 js = Int(start_row[i])
                 je = Int(start_row[i + 1]) - 1
                 for j in je:-1:js
@@ -513,7 +519,7 @@ function btran_l_sparsish!(
         pval = region[ii]
         if abs(pval) > tol
             nnz += 1
-            indices[nnz] = Int32(ii)
+            indices[nnz] = ii % Int32
             js = Int(start_row[ii])
             je = Int(start_row[ii + 1]) - 1
             for j in je:-1:js
@@ -537,7 +543,7 @@ function btran_l_sparsish!(
                     pval = region[ii]
                     if abs(pval) > tol
                         nnz += 1
-                        indices[nnz] = Int32(ii)
+                        indices[nnz] = ii % Int32
                         js = Int(start_row[ii])
                         je = Int(start_row[ii + 1]) - 1
                         for j in je:-1:js
@@ -575,27 +581,30 @@ function btran_l_sparse!(
 
     n_list = 0
     @inbounds for k in 1:nnz_in
-        kpiv = Int(indices[k])
+        kpiv32 = indices[k]
+        kpiv = Int(kpiv32)
         if mark[kpiv] == UInt8(0) && region[kpiv] != 0.0
-            stack[1] = Int32(kpiv)
+            stack[1] = kpiv32
             j = Int(start_row[kpiv + 1]) - 1
             n_stack = 1
             while n_stack >= 1
                 if j >= Int(start_row[kpiv])
-                    jpiv = Int(idx_col[j])
+                    jpiv32 = idx_col[j]
+                    jpiv = Int(jpiv32)
                     j -= 1
-                    next[n_stack] = Int32(j)
+                    next[n_stack] = j % Int32
                     if mark[jpiv] == UInt8(0)
+                        kpiv32 = jpiv32
                         kpiv = jpiv
                         j = Int(start_row[kpiv + 1]) - 1
                         n_stack += 1
-                        stack[n_stack] = Int32(kpiv)
+                        stack[n_stack] = kpiv32
                         mark[kpiv] = UInt8(1)
-                        next[n_stack] = Int32(j)
+                        next[n_stack] = j % Int32
                     end
                 else
                     n_list += 1
-                    list[n_list] = Int32(kpiv)
+                    list[n_list] = kpiv % Int32
                     mark[kpiv] = UInt8(1)
                     n_stack -= 1
                     if n_stack >= 1
@@ -609,12 +618,13 @@ function btran_l_sparse!(
 
     nnz = 0
     @inbounds for i in n_list:-1:1
-        ipiv = Int(list[i])
+        ipiv32 = list[i]
+        ipiv = Int(ipiv32)
         mark[ipiv] = UInt8(0)
         pval = region[ipiv]
         if abs(pval) > tol
             nnz += 1
-            indices[nnz] = Int32(ipiv)
+            indices[nnz] = ipiv32
             js = Int(start_row[ipiv])
             je = Int(start_row[ipiv + 1]) - 1
             for j in js:je
@@ -744,18 +754,18 @@ function btran!(
             ir_in = Int(index[i])
             val = vector[i]
             vector[i] = 0.0
-            ir = Int(piv_col[ir_in])
-            region[ir] = val
-            region_idx[i] = Int32(ir)
+            ir32 = piv_col[ir_in]
+            region[Int(ir32)] = val
+            region_idx[i] = ir32
         end
     else
         @inbounds for i in 1:nnz_in
             ir_in = Int(index[i])
             val = vector[ir_in]
             vector[ir_in] = 0.0
-            ir = Int(piv_col[ir_in])
-            region[ir] = val
-            region_idx[i] = Int32(ir)
+            ir32 = piv_col[ir_in]
+            region[Int(ir32)] = val
+            region_idx[i] = ir32
         end
     end
 
@@ -810,9 +820,9 @@ function btran!(
             ir = Int(region_idx[i])
             val = region[ir]
             region[ir] = 0.0
-            out_row = Int(perm_back[ir])
-            vector[out_row] = val
-            index[i] = Int32(out_row)
+            out_row32 = perm_back[ir]
+            vector[Int(out_row32)] = val
+            index[i] = out_row32
         end
     end
 
