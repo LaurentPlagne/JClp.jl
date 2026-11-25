@@ -2,7 +2,7 @@
 # Zero Ptr, zero unsafe_load/unsafe_store!, zero PodView, --trim=safe clean.
 # Implements reversible LP presolve passes (fixed/empty cols, empty rows, row singletons,
 # forcing/redundant rows, bound tightening, free/implied-free col singletons,
-# zero-cost slack singletons, doubleton equalities)
+# zero-cost slack singletons, doubleton equalities, multi-row implied-free substitution)
 # with exact primal/dual postsolve and standalone ClpSimplexModel integration.
 
 const _PS_INF = 1.0e20
@@ -11,18 +11,21 @@ const _PS_ACT_EMPTY_ROW       = Int8(2)  # row i removed (empty or redundant)
 const _PS_ACT_DOUBLETON       = Int8(3)  # eq row i: a1*x1 + a2*x2 = rhs -> x1 = (rhs - a2*x2)/a1
 const _PS_ACT_COL_SINGLETON   = Int8(4)  # eq row i, col j singleton: a*x_j + sum(row_i) = rhs
 const _PS_ACT_SLACK_SINGLETON = Int8(5)  # ineq row i, zero-cost col j singleton: rlo <= a*x_j + sum(row_i) <= rhi
+const _PS_ACT_ROW_SINGLETON   = Int8(6)  # row singleton: rlo <= a*x_j <= rhi
+const _PS_ACT_SUBST           = Int8(7)  # multi-row implied-free col j (col_len == 2): eq r_piv -> r_other
 
 struct _PresolveAction
     kind::Int8
     row::Int32
     col1::Int32
     col2::Int32
-    val1::Float64     # fixed_val / rhs / slack a
-    val2::Float64     # a1 / coeff / slack col_lo
-    val3::Float64     # a2 / c_orig / slack col_hi
-    val4::Float64     # slack old_rlo
-    val5::Float64     # slack old_rhi
-    aux_start::Int32  # slice into aux arrays for COL_SINGLETON / SLACK_SINGLETON row terms
+    val1::Float64     # fixed_val / rhs / slack a / row_sing a / subst rhs_piv
+    val2::Float64     # fixed c_min / a1 / coeff / slack col_lo / row_sing old_lo / subst a_piv
+    val3::Float64     # a2 / c_orig / slack col_hi / row_sing old_hi / subst a_other
+    val4::Float64     # doubleton c1_min / slack old_rlo / row_sing rlo / subst c_min
+    val5::Float64     # doubleton tight_lo2 / slack old_rhi / row_sing rhi
+    val6::Float64     # doubleton tight_hi2
+    aux_start::Int32  # slice into aux arrays for FIXED_COL / DOUBLETON / COL_SINGLETON / SLACK_SINGLETON / SUBST
     aux_len::Int32
 end
 
@@ -200,10 +203,14 @@ function _pw_fix_col!(pw::_PresolveWork, j::Int, val::Float64)::Nothing
     pw.obj_offset_delta += pw.cost[j] * val
     cr = pw.col_rows[j]
     cv = pw.col_vals[j]
+    aux_start = length(pw.aux_cols) + 1
     @inbounds for k in 1:length(cr)
         i = Int(cr[k])
         if pw.row_active[i]
-            shift = cv[k] * val
+            v = cv[k]
+            push!(pw.aux_cols, Int32(i))
+            push!(pw.aux_vals, v)
+            shift = v * val
             if pw.row_lo[i] > -_PS_INF
                 pw.row_lo[i] -= shift
             end
@@ -213,16 +220,17 @@ function _pw_fix_col!(pw::_PresolveWork, j::Int, val::Float64)::Nothing
             _pw_remove_from_row!(pw, i, j)
         end
     end
+    aux_len = length(pw.aux_cols) - aux_start + 1
     Base.empty!(cr)
     Base.empty!(cv)
     push!(pw.actions, _PresolveAction(
         _PS_ACT_FIXED_COL, Int32(0), Int32(j), Int32(0),
-        val, pw.cost[j], 0.0, 0.0, 0.0, Int32(0), Int32(0),
+        val, pw.cost[j], 0.0, 0.0, 0.0, 0.0, Int32(aux_start), Int32(aux_len),
     ))
     return nothing
 end
 
-function _pw_remove_row!(pw::_PresolveWork, i::Int)::Nothing
+function _pw_remove_row!(pw::_PresolveWork, i::Int; record::Bool = true)::Nothing
     pw.row_active[i] || return nothing
     pw.row_active[i] = false
     rc = pw.row_cols[i]
@@ -235,10 +243,12 @@ function _pw_remove_row!(pw::_PresolveWork, i::Int)::Nothing
     end
     Base.empty!(rc)
     Base.empty!(rv)
-    push!(pw.actions, _PresolveAction(
-        _PS_ACT_EMPTY_ROW, Int32(i), Int32(0), Int32(0),
-        0.0, 0.0, 0.0, 0.0, 0.0, Int32(0), Int32(0),
-    ))
+    if record
+        push!(pw.actions, _PresolveAction(
+            _PS_ACT_EMPTY_ROW, Int32(i), Int32(0), Int32(0),
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Int32(0), Int32(0),
+        ))
+    end
     return nothing
 end
 
@@ -306,6 +316,8 @@ function _pw_pass_rows_and_singletons!(pw::_PresolveWork)::Tuple{Int,Int}
             if abs(a) <= 1.0e-12
                 continue
             end
+            old_lo = pw.col_lo[j]
+            old_hi = pw.col_hi[j]
             if a > 0.0
                 new_lo = rlo > -_PS_INF ? (rlo / a) : -floatmax(Float64)
                 new_hi = rhi < _PS_INF ? (rhi / a) : floatmax(Float64)
@@ -322,7 +334,11 @@ function _pw_pass_rows_and_singletons!(pw::_PresolveWork)::Tuple{Int,Int}
             if pw.col_lo[j] > pw.col_hi[j] + tol * max(1.0, abs(pw.col_lo[j]))
                 return (n_red, CLP_STATUS_PRIMAL_INFEAS)
             end
-            _pw_remove_row!(pw, i)
+            _pw_remove_row!(pw, i; record = false)
+            push!(pw.actions, _PresolveAction(
+                _PS_ACT_ROW_SINGLETON, Int32(i), Int32(j), Int32(0),
+                a, old_lo, old_hi, rlo, rhi, 0.0, Int32(0), Int32(0),
+            ))
             n_red += 1
             if pw.col_hi[j] - pw.col_lo[j] <= tol
                 _pw_fix_col!(pw, j, 0.5 * (pw.col_lo[j] + pw.col_hi[j]))
@@ -576,6 +592,75 @@ function _pw_pass_bound_tightening!(pw::_PresolveWork)::Tuple{Int,Int}
     return (n_red, 0)
 end
 
+@inline function _pw_is_implied_free(
+    pw::_PresolveWork,
+    i::Int,
+    j::Int,
+    a::Float64,
+    rhs::Float64,
+)::Bool
+    tol = pw.tol
+    lo_j = pw.col_lo[j]
+    hi_j = pw.col_hi[j]
+    (lo_j <= -_PS_INF && hi_j >= _PS_INF) && return true
+
+    # Track lower and upper implied bounds independently (one-sided bounds suffice)
+    rc = pw.row_cols[i]
+    rv = pw.row_vals[i]
+    sum_min = 0.0
+    sum_max = 0.0
+    min_valid = true
+    max_valid = true
+    need_min = a > 0.0 ? (hi_j < _PS_INF) : (lo_j > -_PS_INF)
+    need_max = a > 0.0 ? (lo_j > -_PS_INF) : (hi_j < _PS_INF)
+    @inbounds for k in 1:length(rc)
+        c2 = Int(rc[k])
+        c2 == j && continue
+        v2 = rv[k]
+        v2 == 0.0 && continue
+        l2 = pw.col_lo[c2]
+        u2 = pw.col_hi[c2]
+        if v2 > 0.0
+            if l2 <= -_PS_INF
+                min_valid = false
+            elseif min_valid
+                sum_min += v2 * l2
+            end
+            if u2 >= _PS_INF
+                max_valid = false
+            elseif max_valid
+                sum_max += v2 * u2
+            end
+        else
+            if u2 >= _PS_INF
+                min_valid = false
+            elseif min_valid
+                sum_min += v2 * u2
+            end
+            if l2 <= -_PS_INF
+                max_valid = false
+            elseif max_valid
+                sum_max += v2 * l2
+            end
+        end
+        ((need_min && !min_valid) || (need_max && !max_valid)) && break
+    end
+    if a > 0.0
+        lo_valid = max_valid
+        hi_valid = min_valid
+        imp_lo = lo_valid ? (rhs - sum_max) / a : -_PS_INF
+        imp_hi = hi_valid ? (rhs - sum_min) / a : _PS_INF
+    else
+        lo_valid = min_valid
+        hi_valid = max_valid
+        imp_lo = lo_valid ? (rhs - sum_min) / a : -_PS_INF
+        imp_hi = hi_valid ? (rhs - sum_max) / a : _PS_INF
+    end
+    lo_ok = (lo_j <= -_PS_INF) || (lo_valid && imp_lo >= lo_j - tol)
+    hi_ok = (hi_j >= _PS_INF)  || (hi_valid && imp_hi <= hi_j + tol)
+    return lo_ok && hi_ok
+end
+
 # Pass 4: Free / implied-free column singletons in equality rows
 function _pw_pass_col_singletons!(pw::_PresolveWork)::Tuple{Int,Int}
     n_red = 0
@@ -588,77 +673,14 @@ function _pw_pass_col_singletons!(pw::_PresolveWork)::Tuple{Int,Int}
         rlo = pw.row_lo[i]
         rhi = pw.row_hi[i]
         # Only equality rows for exact substitution
-        abs(rhi - rlo) <= tol || continue
+        (rlo > -_PS_INF && rhi < _PS_INF && abs(rhi - rlo) <= tol) || continue
         a = pw.col_vals[j][1]
         abs(a) >= 1.0e-5 || continue
 
-        # Check if col j is free or implied free from row i
-        lo_j = pw.col_lo[j]
-        hi_j = pw.col_hi[j]
-        is_free = (lo_j <= -_PS_INF && hi_j >= _PS_INF)
-        if !is_free
-            # Check implied bounds of x_j = (rhs - sum_{k != j} a_ik x_k) / a
-            # Track lower and upper implied bounds independently (one-sided bounds suffice)
-            rc = pw.row_cols[i]
-            rv = pw.row_vals[i]
-            sum_min = 0.0
-            sum_max = 0.0
-            min_valid = true
-            max_valid = true
-            need_min = a > 0.0 ? (hi_j < _PS_INF) : (lo_j > -_PS_INF)
-            need_max = a > 0.0 ? (lo_j > -_PS_INF) : (hi_j < _PS_INF)
-            for k in 1:length(rc)
-                c2 = Int(rc[k])
-                c2 == j && continue
-                v2 = rv[k]
-                v2 == 0.0 && continue
-                l2 = pw.col_lo[c2]
-                u2 = pw.col_hi[c2]
-                if v2 > 0.0
-                    if l2 <= -_PS_INF
-                        min_valid = false
-                    elseif min_valid
-                        sum_min += v2 * l2
-                    end
-                    if u2 >= _PS_INF
-                        max_valid = false
-                    elseif max_valid
-                        sum_max += v2 * u2
-                    end
-                else
-                    if u2 >= _PS_INF
-                        min_valid = false
-                    elseif min_valid
-                        sum_min += v2 * u2
-                    end
-                    if l2 <= -_PS_INF
-                        max_valid = false
-                    elseif max_valid
-                        sum_max += v2 * l2
-                    end
-                end
-                ((need_min && !min_valid) || (need_max && !max_valid)) && break
-            end
-            rhs = 0.5 * (rlo + rhi)
-            if a > 0.0
-                lo_valid = max_valid
-                hi_valid = min_valid
-                imp_lo = lo_valid ? (rhs - sum_max) / a : -_PS_INF
-                imp_hi = hi_valid ? (rhs - sum_min) / a : _PS_INF
-            else
-                lo_valid = min_valid
-                hi_valid = max_valid
-                imp_lo = lo_valid ? (rhs - sum_min) / a : -_PS_INF
-                imp_hi = hi_valid ? (rhs - sum_max) / a : _PS_INF
-            end
-            lo_ok = (lo_j <= -_PS_INF) || (lo_valid && imp_lo >= lo_j - tol)
-            hi_ok = (hi_j >= _PS_INF)  || (hi_valid && imp_hi <= hi_j + tol)
-            is_free = lo_ok && hi_ok
-        end
-        is_free || continue
+        rhs = 0.5 * (rlo + rhi)
+        _pw_is_implied_free(pw, i, j, a, rhs) || continue
 
         # Eliminate col j and row i: x_j = (rhs - sum_{k!=j} a_ik x_k) / a
-        rhs = 0.5 * (rlo + rhi)
         cj = pw.cost[j]
         ratio_c = cj / a
         pw.obj_offset_delta += ratio_c * rhs
@@ -684,7 +706,7 @@ function _pw_pass_col_singletons!(pw::_PresolveWork)::Tuple{Int,Int}
 
         push!(pw.actions, _PresolveAction(
             _PS_ACT_COL_SINGLETON, Int32(i), Int32(j), Int32(0),
-            rhs, a, cj, 0.0, 0.0, Int32(aux_start), Int32(aux_len),
+            rhs, a, cj, 0.0, 0.0, 0.0, Int32(aux_start), Int32(aux_len),
         ))
         n_red += 1
     end
@@ -766,7 +788,7 @@ function _pw_pass_slack_singletons!(pw::_PresolveWork)::Tuple{Int,Int}
 
         push!(pw.actions, _PresolveAction(
             _PS_ACT_SLACK_SINGLETON, Int32(i), Int32(j), Int32(0),
-            a, lo, hi, rlo, rhi, Int32(aux_start), Int32(aux_len),
+            a, lo, hi, rlo, rhi, 0.0, Int32(aux_start), Int32(aux_len),
         ))
         n_red += 1
 
@@ -816,6 +838,8 @@ function _pw_pass_doubletons!(pw::_PresolveWork)::Tuple{Int,Int}
         # x1 = (rhs - a2 * x2) / a1  =>  lo1 <= (rhs - a2 * x2)/a1 <= hi1
         lo1 = pw.col_lo[j1]
         hi1 = pw.col_hi[j1]
+        old_lo2 = pw.col_lo[j2]
+        old_hi2 = pw.col_hi[j2]
         ratio = a2 / a1
         # a2*x2 = rhs - a1*x1 => x2 = rhs/a2 - (a1/a2)*x1
         s_a1 = a1 / a2
@@ -826,6 +850,8 @@ function _pw_pass_doubletons!(pw::_PresolveWork)::Tuple{Int,Int}
             nlo2 = lo1 > -_PS_INF ? (rhs / a2 - s_a1 * lo1) : -floatmax(Float64)
             nhi2 = hi1 < _PS_INF ? (rhs / a2 - s_a1 * hi1) : floatmax(Float64)
         end
+        tight_lo2 = (nlo2 > -_PS_INF && (old_lo2 <= -_PS_INF || nlo2 >= old_lo2 - 1.0e-7 * max(1.0, abs(old_lo2)))) ? nlo2 : NaN
+        tight_hi2 = (nhi2 < _PS_INF && (old_hi2 >= _PS_INF || nhi2 <= old_hi2 + 1.0e-7 * max(1.0, abs(old_hi2)))) ? nhi2 : NaN
         if nlo2 > pw.col_lo[j2]; pw.col_lo[j2] = nlo2; end
         if nhi2 < pw.col_hi[j2]; pw.col_hi[j2] = nhi2; end
         if pw.col_lo[j2] > pw.col_hi[j2] + tol * max(1.0, abs(pw.col_lo[j2]))
@@ -843,27 +869,177 @@ function _pw_pass_doubletons!(pw::_PresolveWork)::Tuple{Int,Int}
         _pw_remove_from_col!(pw, j2, i)
         Base.empty!(pw.row_cols[i]); Base.empty!(pw.row_vals[i])
 
-        # Substitute j1 in remaining rows of col j1
+        # Substitute j1 in remaining rows of col j1 (and save active rows for dual postsolve)
         rows_j1 = copy(pw.col_rows[j1])
         vals_j1 = copy(pw.col_vals[j1])
         pw.col_active[j1] = false
         Base.empty!(pw.col_rows[j1]); Base.empty!(pw.col_vals[j1])
+        aux_start = length(pw.aux_cols) + 1
         for k in 1:length(rows_j1)
             ir = Int(rows_j1[k])
             pw.row_active[ir] || continue
             v = vals_j1[k]
+            push!(pw.aux_cols, Int32(ir))
+            push!(pw.aux_vals, v)
             _pw_remove_from_row!(pw, ir, j1)
             shift = v * (rhs / a1)
             if pw.row_lo[ir] > -_PS_INF; pw.row_lo[ir] -= shift; end
             if pw.row_hi[ir] < _PS_INF;  pw.row_hi[ir] -= shift; end
             _pw_add_entry!(pw, ir, j2, -v * ratio)
         end
+        aux_len = length(pw.aux_cols) - aux_start + 1
 
         push!(pw.actions, _PresolveAction(
             _PS_ACT_DOUBLETON, Int32(i), Int32(j1), Int32(j2),
-            rhs, a1, a2, 0.0, 0.0, Int32(0), Int32(0),
+            rhs, a1, a2, c1, tight_lo2, tight_hi2, Int32(aux_start), Int32(aux_len),
         ))
         n_red += 1
+    end
+    return (n_red, 0)
+end
+
+function _pw_try_subst!(
+    pw::_PresolveWork,
+    j::Int,
+    r_piv::Int,
+    a_piv::Float64,
+    r_other::Int,
+    a_other::Float64,
+)::Tuple{Int,Int}
+    abs(a_piv) >= 1.0e-4 || return (0, 0)
+    mult_r = a_other / a_piv
+    abs(mult_r) <= 1.0e3 || return (0, 0)
+
+    rc_piv = pw.row_cols[r_piv]
+    rv_piv = pw.row_vals[r_piv]
+    max_abs_other = 0.0
+    @inbounds for k in 1:length(rc_piv)
+        Int(rc_piv[k]) == j && continue
+        av = abs(rv_piv[k])
+        if av > max_abs_other
+            max_abs_other = av
+        end
+    end
+    max_abs_other * abs(mult_r) <= 1.0e8 || return (0, 0)
+
+    rhs_piv = 0.5 * (pw.row_lo[r_piv] + pw.row_hi[r_piv])
+    rshift = mult_r * rhs_piv
+    abs(rshift) < 1.0e12 || return (0, 0)
+    if pw.row_lo[r_other] > -_PS_INF && (pw.row_lo[r_other] - rshift <= -_PS_INF)
+        return (0, 0)
+    end
+    if pw.row_hi[r_other] < _PS_INF && (pw.row_hi[r_other] - rshift >= _PS_INF)
+        return (0, 0)
+    end
+
+    _pw_is_implied_free(pw, r_piv, j, a_piv, rhs_piv) || return (0, 0)
+
+    # Save (c2, v2) for c2 != j in r_piv before mutating row/col incidence
+    aux_start = length(pw.aux_cols) + 1
+    @inbounds for k in 1:length(rc_piv)
+        c2 = Int(rc_piv[k])
+        c2 == j && continue
+        push!(pw.aux_cols, Int32(c2))
+        push!(pw.aux_vals, rv_piv[k])
+    end
+    aux_len = length(pw.aux_cols) - aux_start + 1
+
+    cj = pw.cost[j]
+    push!(pw.actions, _PresolveAction(
+        _PS_ACT_SUBST, Int32(r_piv), Int32(j), Int32(r_other),
+        rhs_piv, a_piv, a_other, cj, 0.0, 0.0, Int32(aux_start), Int32(aux_len),
+    ))
+
+    # Substitute x_j = (rhs_piv - sum v2 * x_c2) / a_piv into objective and r_other
+    mult_obj = cj / a_piv
+    pw.obj_offset_delta += mult_obj * rhs_piv
+    @inbounds for p in aux_start:(aux_start + aux_len - 1)
+        c2 = Int(pw.aux_cols[p])
+        v2 = pw.aux_vals[p]
+        pw.cost[c2] -= mult_obj * v2
+    end
+
+    if pw.row_lo[r_other] > -_PS_INF
+        pw.row_lo[r_other] -= rshift
+    end
+    if pw.row_hi[r_other] < _PS_INF
+        pw.row_hi[r_other] -= rshift
+    end
+    _pw_remove_from_row!(pw, r_other, j)
+    @inbounds for p in aux_start:(aux_start + aux_len - 1)
+        c2 = Int(pw.aux_cols[p])
+        v2 = pw.aux_vals[p]
+        _pw_add_entry!(pw, r_other, c2, -mult_r * v2)
+    end
+
+    # Remove r_piv from all c2 in r_piv and deactivate r_piv & j
+    @inbounds for p in aux_start:(aux_start + aux_len - 1)
+        _pw_remove_from_col!(pw, Int(pw.aux_cols[p]), r_piv)
+    end
+    pw.row_active[r_piv] = false
+    pw.col_active[j] = false
+    Base.empty!(pw.row_cols[r_piv]); Base.empty!(pw.row_vals[r_piv])
+    Base.empty!(pw.col_rows[j]); Base.empty!(pw.col_vals[j])
+
+    n_added = 1
+    if isempty(pw.row_cols[r_other])
+        tol = pw.tol
+        if pw.row_lo[r_other] > tol || pw.row_hi[r_other] < -tol
+            return (n_added, CLP_STATUS_PRIMAL_INFEAS)
+        end
+        _pw_remove_row!(pw, r_other)
+        n_added += 1
+    end
+    return (n_added, 0)
+end
+
+# Pass 6: Multi-row implied-free column substitution (col_len == 2)
+function _pw_pass_implied_free_subst!(pw::_PresolveWork; max_row_len::Int = 4)::Tuple{Int,Int}
+    n_red = 0
+    tol = pw.tol
+    @inbounds for j in 1:pw.ncols
+        pw.col_active[j] || continue
+        length(pw.col_rows[j]) == 2 || continue
+        r1 = Int(pw.col_rows[j][1])
+        r2 = Int(pw.col_rows[j][2])
+        (pw.row_active[r1] && pw.row_active[r2] && r1 != r2) || continue
+        a1 = pw.col_vals[j][1]
+        a2 = pw.col_vals[j][2]
+
+        len1 = length(pw.row_cols[r1])
+        len2 = length(pw.row_cols[r2])
+        eq1 = (pw.row_lo[r1] > -_PS_INF && pw.row_hi[r1] < _PS_INF &&
+               abs(pw.row_hi[r1] - pw.row_lo[r1]) <= tol &&
+               2 <= len1 <= max_row_len)
+        eq2 = (pw.row_lo[r2] > -_PS_INF && pw.row_hi[r2] < _PS_INF &&
+               abs(pw.row_hi[r2] - pw.row_lo[r2]) <= tol &&
+               2 <= len2 <= max_row_len)
+        (eq1 || eq2) || continue
+
+        first_is_1 = if eq1 && eq2
+            (len1 < len2) || (len1 == len2 && abs(a1) >= abs(a2))
+        else
+            eq1
+        end
+
+        r_piv, a_piv, r_other, a_other = first_is_1 ? (r1, a1, r2, a2) : (r2, a2, r1, a1)
+        n_sub, st = _pw_try_subst!(pw, j, r_piv, a_piv, r_other, a_other)
+        if st != 0
+            return (n_red + n_sub, st)
+        end
+        if n_sub > 0
+            n_red += n_sub
+            continue
+        end
+
+        if eq1 && eq2
+            r_piv2, a_piv2, r_other2, a_other2 = first_is_1 ? (r2, a2, r1, a1) : (r1, a1, r2, a2)
+            n_sub2, st2 = _pw_try_subst!(pw, j, r_piv2, a_piv2, r_other2, a_other2)
+            if st2 != 0
+                return (n_red + n_sub2, st2)
+            end
+            n_red += n_sub2
+        end
     end
     return (n_red, 0)
 end
@@ -892,6 +1068,8 @@ function presolve(m::ClpSimplexModel; max_passes::Int = 15)::_PresolvedProblem
         n6, st = _pw_pass_slack_singletons!(pw); tot += n6
         st != 0 && (status = st; break)
         n7, st = _pw_pass_doubletons!(pw); tot += n7
+        st != 0 && (status = st; break)
+        n8, st = _pw_pass_implied_free_subst!(pw); tot += n8
         st != 0 && (status = st; break)
         tot == 0 && break
     end
@@ -975,47 +1153,139 @@ function presolve(m::ClpSimplexModel; max_passes::Int = 15)::_PresolvedProblem
     )
 end
 
+@inline function _ps_row_nonbasic_status(ax::Float64, rlo::Float64, rhi::Float64)::UInt8
+    if rlo > -_PS_INF && rhi < _PS_INF && abs(rhi - rlo) <= 1.0e-9
+        return _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+    elseif rlo > -_PS_INF && (rhi >= _PS_INF || abs(ax - rlo) <= abs(rhi - ax))
+        return _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
+    else
+        return _sb_set_status(UInt8(0), CLP_STATUS_AT_UPPER)
+    end
+end
+
 """
     postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)
 
 Recover the full unpresolved primal solution (`col_activity`, `row_activity`),
-basis `status`, and `objective_value` on `m` from the solved reduced model `ps.reduced`.
+basis `status`, duals (`dual_row_sol`, `reduced_cost`), and `objective_value`
+on `m` from the solved reduced model `ps.reduced`.
 """
 function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
     nrows = m.nrows
     ncols = m.ncols
     red = ps.reduced
+    obj_s = m.obj_sense
 
     fill!(m.col_activity, 0.0)
     fill!(m.row_activity, 0.0)
     fill!(m.dual_row_sol, 0.0)
     fill!(m.reduced_cost, 0.0)
+    was_fixed = falses(ncols)
 
-    # Copy reduced primal solution & status back to original indices
+    # Copy reduced primal/dual solution & status back to original indices
     @inbounds for rj in 1:ps.red_ncols
         oj = Int(ps.col_map[rj])
         m.col_activity[oj] = red.col_activity[rj]
         m.status[oj] = red.status[rj]
-        m.reduced_cost[oj] = red.reduced_cost[rj] * m.obj_sense
+        m.reduced_cost[oj] = red.reduced_cost[rj] * obj_s
     end
     @inbounds for ri in 1:ps.red_nrows
         oi = Int(ps.row_map[ri])
         m.row_activity[oi] = red.row_activity[ri]
         m.status[ncols + oi] = red.status[ps.red_ncols + ri]
-        m.dual_row_sol[oi] = red.dual_row_sol[ri] * m.obj_sense
+        m.dual_row_sol[oi] = red.dual_row_sol[ri] * obj_s
     end
 
-    # Replay presolve actions in reverse order to recover eliminated primal variables & basis
+    # Replay presolve actions in reverse order to recover eliminated primal/dual variables & basis
     @inbounds for k in length(ps.actions):-1:1
         act = ps.actions[k]
         if act.kind == _PS_ACT_FIXED_COL
             j = Int(act.col1)
-            m.col_activity[j] = act.val1
-            m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+            val = act.val1
+            m.col_activity[j] = val
+            lo = m.col_lower[j]
+            hi = m.col_upper[j]
+            if abs(hi - lo) <= 1.0e-9
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+            elseif lo > -_PS_INF && abs(val - lo) <= 1.0e-7 * max(1.0, abs(lo))
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_LOWER)
+            elseif hi < _PS_INF && abs(val - hi) <= 1.0e-7 * max(1.0, abs(hi))
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_AT_UPPER)
+            elseif lo <= -_PS_INF && hi >= _PS_INF
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FREE)
+            else
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+            end
+            dual_sum = 0.0
+            a0 = Int(act.aux_start)
+            al = Int(act.aux_len)
+            for p in a0:(a0 + al - 1)
+                dual_sum += ps.aux_vals[p] * m.dual_row_sol[Int(ps.aux_cols[p])]
+            end
+            m.reduced_cost[j] = act.val2 * obj_s - dual_sum
+            was_fixed[j] = true
         elseif act.kind == _PS_ACT_EMPTY_ROW
             i = Int(act.row)
             m.status[ncols + i] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
             m.dual_row_sol[i] = 0.0
+        elseif act.kind == _PS_ACT_ROW_SINGLETON
+            i = Int(act.row)
+            j = Int(act.col1)
+            a = act.val1
+            cmp_lo = min(act.val2, m.col_lower[j])
+            cmp_hi = max(act.val3, m.col_upper[j])
+            rlo = act.val4
+            rhi = act.val5
+            xj = m.col_activity[j]
+            st = _sb_get_status(m.status[j])
+            rc_j = m.reduced_cost[j]
+            ax = a * xj
+            at_rlo = rlo > -_PS_INF && abs(ax - rlo) <= 1.0e-6 * max(1.0, abs(rlo))
+            at_rhi = rhi < _PS_INF && abs(ax - rhi) <= 1.0e-6 * max(1.0, abs(rhi))
+            row_binding = at_rlo || at_rhi
+
+            is_eq_row = rlo > -_PS_INF && rhi < _PS_INF && abs(rhi - rlo) <= 1.0e-9
+            y_cand = rc_j / a
+            dual_ok = is_eq_row ||
+                      (at_rlo && y_cand * obj_s >= -1.0e-12) ||
+                      (at_rhi && y_cand * obj_s <= 1.0e-12)
+
+            strictly_inside = (cmp_lo <= -_PS_INF || xj > cmp_lo + 1.0e-7 * max(1.0, abs(cmp_lo))) &&
+                              (cmp_hi >= _PS_INF  || xj < cmp_hi - 1.0e-7 * max(1.0, abs(cmp_hi)))
+            tight_lo = (st == CLP_STATUS_AT_LOWER) &&
+                       (cmp_lo <= -_PS_INF || xj > cmp_lo + 1.0e-7 * max(1.0, abs(cmp_lo)))
+            tight_hi = (st == CLP_STATUS_AT_UPPER) &&
+                       (cmp_hi >= _PS_INF  || xj < cmp_hi - 1.0e-7 * max(1.0, abs(cmp_hi)))
+
+            degen_lo = (st != CLP_STATUS_BASIC) &&
+                       (cmp_lo > -_PS_INF && abs(xj - cmp_lo) <= 1.0e-7 * max(1.0, abs(cmp_lo))) &&
+                       ((a > 0.0 && at_rhi) || (a < 0.0 && at_rlo)) &&
+                       (rc_j * obj_s < -1.0e-12)
+            degen_hi = (st != CLP_STATUS_BASIC) &&
+                       (cmp_hi < _PS_INF && abs(xj - cmp_hi) <= 1.0e-7 * max(1.0, abs(cmp_hi))) &&
+                       ((a > 0.0 && at_rlo) || (a < 0.0 && at_rhi)) &&
+                       (rc_j * obj_s > 1.0e-12)
+
+            if row_binding && dual_ok && (
+                (strictly_inside && (abs(rc_j) > 1.0e-12 || st == CLP_STATUS_IS_FIXED)) ||
+                ((tight_lo || tight_hi) && abs(rc_j) > 1.0e-12) ||
+                degen_lo || degen_hi
+            )
+                m.dual_row_sol[i] = y_cand
+                m.reduced_cost[j] = 0.0
+                was_fixed[j] = false
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+                m.status[ncols + i] = _ps_row_nonbasic_status(ax, rlo, rhi)
+            elseif row_binding && (tight_lo || tight_hi)
+                m.dual_row_sol[i] = 0.0
+                m.reduced_cost[j] = 0.0
+                was_fixed[j] = false
+                m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+                m.status[ncols + i] = _ps_row_nonbasic_status(ax, rlo, rhi)
+            else
+                m.dual_row_sol[i] = 0.0
+                m.status[ncols + i] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+            end
         elseif act.kind == _PS_ACT_DOUBLETON
             i = Int(act.row)
             j1 = Int(act.col1)
@@ -1023,9 +1293,59 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
             rhs = act.val1
             a1 = act.val2
             a2 = act.val3
-            m.col_activity[j1] = (rhs - a2 * m.col_activity[j2]) / a1
-            m.status[j1] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+            c1_min = act.val4
+            tight_lo2 = act.val5
+            tight_hi2 = act.val6
+            x2 = m.col_activity[j2]
+            m.col_activity[j1] = (rhs - a2 * x2) / a1
             m.status[ncols + i] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+
+            dual_sum = 0.0
+            a0 = Int(act.aux_start)
+            al = Int(act.aux_len)
+            for p in a0:(a0 + al - 1)
+                dual_sum += ps.aux_vals[p] * m.dual_row_sol[Int(ps.aux_cols[p])]
+            end
+            y_i = (c1_min * obj_s - dual_sum) / a1
+
+            st2 = _sb_get_status(m.status[j2])
+            rc2 = m.reduced_cost[j2]
+            lo2_orig = m.col_lower[j2]
+            hi2_orig = m.col_upper[j2]
+            at_tight_lo = !isnan(tight_lo2) &&
+                          (lo2_orig <= -_PS_INF || tight_lo2 > lo2_orig + 1.0e-7 * max(1.0, abs(lo2_orig))) &&
+                          abs(x2 - tight_lo2) <= 1.0e-5 * max(1.0, abs(tight_lo2))
+            at_tight_hi = !isnan(tight_hi2) &&
+                          (hi2_orig >= _PS_INF || tight_hi2 < hi2_orig - 1.0e-7 * max(1.0, abs(hi2_orig))) &&
+                          abs(x2 - tight_hi2) <= 1.0e-5 * max(1.0, abs(tight_hi2))
+
+            swap_to_lo = (st2 == CLP_STATUS_AT_LOWER && at_tight_lo && abs(rc2) > 1.0e-12) ||
+                         (st2 == CLP_STATUS_AT_UPPER && at_tight_lo && rc2 * obj_s > 1.0e-12) ||
+                         (st2 == CLP_STATUS_IS_FIXED && at_tight_lo && (!at_tight_hi || rc2 * obj_s > 1.0e-12))
+            swap_to_hi = !swap_to_lo && (
+                         (st2 == CLP_STATUS_AT_UPPER && at_tight_hi && abs(rc2) > 1.0e-12) ||
+                         (st2 == CLP_STATUS_AT_LOWER && at_tight_hi && rc2 * obj_s < -1.0e-12) ||
+                         (st2 == CLP_STATUS_IS_FIXED && at_tight_hi && (!at_tight_lo || rc2 * obj_s < -1.0e-12)))
+
+            if swap_to_lo || swap_to_hi
+                y_i += rc2 / a2
+                m.dual_row_sol[i] = y_i
+                m.reduced_cost[j1] = -(a1 / a2) * rc2
+                m.reduced_cost[j2] = 0.0
+                was_fixed[j2] = false
+                m.status[j2] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+                same_sign = (a1 / a2) > 0.0
+                j1_st = if swap_to_lo
+                    same_sign ? CLP_STATUS_AT_UPPER : CLP_STATUS_AT_LOWER
+                else
+                    same_sign ? CLP_STATUS_AT_LOWER : CLP_STATUS_AT_UPPER
+                end
+                m.status[j1] = _sb_set_status(UInt8(0), j1_st)
+            else
+                m.dual_row_sol[i] = y_i
+                m.reduced_cost[j1] = 0.0
+                m.status[j1] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+            end
         elseif act.kind == _PS_ACT_COL_SINGLETON
             i = Int(act.row)
             j = Int(act.col1)
@@ -1040,6 +1360,27 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
             m.col_activity[j] = s / a
             m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
             m.status[ncols + i] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+            m.dual_row_sol[i] = (act.val3 * obj_s) / a
+            m.reduced_cost[j] = 0.0
+        elseif act.kind == _PS_ACT_SUBST
+            r_piv = Int(act.row)
+            j = Int(act.col1)
+            r_other = Int(act.col2)
+            rhs_piv = act.val1
+            a_piv = act.val2
+            a_other = act.val3
+            c_min = act.val4
+            s_val = rhs_piv
+            a0 = Int(act.aux_start)
+            al = Int(act.aux_len)
+            for p in a0:(a0 + al - 1)
+                s_val -= ps.aux_vals[p] * m.col_activity[Int(ps.aux_cols[p])]
+            end
+            m.col_activity[j] = s_val / a_piv
+            m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
+            m.status[ncols + r_piv] = _sb_set_status(UInt8(0), CLP_STATUS_IS_FIXED)
+            m.dual_row_sol[r_piv] = (c_min * obj_s - a_other * m.dual_row_sol[r_other]) / a_piv
+            m.reduced_cost[j] = 0.0
         elseif act.kind == _PS_ACT_SLACK_SINGLETON
             i = Int(act.row)
             j = Int(act.col1)
@@ -1105,7 +1446,23 @@ function postsolve!(m::ClpSimplexModel, ps::_PresolvedProblem)::Nothing
                 m.status[j] = _sb_set_status(UInt8(0), CLP_STATUS_BASIC)
                 m.status[ncols + i] = _sb_set_status(UInt8(0), a > 0.0 ? CLP_STATUS_AT_UPPER : CLP_STATUS_AT_LOWER)
             end
+            m.reduced_cost[j] = -a * m.dual_row_sol[i]
         end
+    end
+
+    # Recompute exact reduced_cost = objective - A' * dual_row_sol for fixed columns
+    starts = m.mat_starts
+    indices = m.mat_indices
+    elems = m.mat_elements
+    @inbounds for j in 1:ncols
+        was_fixed[j] || continue
+        rc = m.objective[j]
+        s_idx = Int(starts[j])
+        e_idx = Int(starts[j + 1]) - 1
+        for k in s_idx:e_idx
+            rc -= elems[k] * m.dual_row_sol[Int(indices[k])]
+        end
+        m.reduced_cost[j] = rc
     end
 
     # Recompute exact unscaled row activities A * x and objective value

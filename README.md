@@ -12,11 +12,11 @@
 - **Allocation-free simplex core**: zero dynamic dispatch and zero per-iteration heap allocations in the simplex loop (`0.0 ms` GC across Netlib benchmarks).
 - **Full LP pipeline**:
   - Fixed- and free-format `.mps` reader (`MpsReader.jl`)
-  - LP Presolve & exact Postsolve (`Presolve.jl`: fixed/empty columns, row/column singletons, forcing/redundant rows, primal bound tightening, zero-cost slack singletons, doubletons)
+  - LP Presolve & exact primal/dual Postsolve (`Presolve.jl`: fixed/empty columns, row/column singletons, forcing/redundant rows, primal bound tightening, zero-cost slack singletons, doubletons, length-2 implied-free substitutions)
   - Dual Simplex with Steepest-Edge row pricing (`DualLoop.jl`, `DualRowPivot.jl`, `SimplexDual.jl`)
   - Primal Simplex with Steepest-Edge / Devex column pricing and piecewise-linear Phase-I cost (`PrimalLoop.jl`, `PrimalColumnPivot.jl`, `NonLinearCost.jl`, `SimplexPrimal.jl`)
   - Markowitz Sparse LU factorization with Forrest-Tomlin updates (`src/coinutils/SparseLU/`)
-- **Verified parity**: 745 unit tests and 116 / 116 Sample + Netlib LP benchmark parity against C++ Clp.
+- **Verified parity**: full unit test suite and 114 / 114 Sample + Netlib LP benchmark parity against C++ Clp (all 91 Netlib models solved in ~9.9 s with dual KKT residual `‖rc - (c - A'y)‖_∞ ≤ 5.5e-7`).
 
 ## Installation
 
@@ -54,13 +54,13 @@ Measured on Apple Silicon (Julia 1.13.2, `initial_solve!` with presolve enabled,
 
 | Instance | Size (`m × n`) | `JClp.jl` (ms) | C++ Clp (ms) | Ratio (`JClp / Clp`) | `JClp` Iters |
 |---|---:|---:|---:|---:|---:|
-| `e226` | 223 × 282 | **3.2** | 7.4 | **0.43×** | 342 |
-| `stocfor2` | 2,157 × 2,031 | 18.9 | **12.3** | 1.54× | 1,597 |
-| `25fv47` | 821 × 1,571 | **70.4** | 108.8 | **0.65×** | 2,546 |
-| `greenbea` | 2,392 × 5,405 | **95.8** | 168.2 | **0.57×** | 3,658 |
-| `maros-r7` | 3,136 × 9,408 | **454.7** | 1,420.5 | **0.32×** | 2,492 |
-| `pilot87` | 2,030 × 4,883 | **2,416.1** | 3,238.7 | **0.75×** | 9,962 |
-| `dfl001` | 6,071 × 12,230 | 5,387.4 | **4,154.4** | 1.30× | 26,690 |
+| `e226` | 223 × 282 | **3.3** | 7.4 | **0.44×** | 342 |
+| `stocfor2` | 2,157 × 2,031 | 19.3 | **12.3** | 1.57× | 1,597 |
+| `25fv47` | 821 × 1,571 | **68.0** | 108.8 | **0.63×** | 2,441 |
+| `greenbea` | 2,392 × 5,405 | **86.7** | 168.2 | **0.52×** | 3,393 |
+| `maros-r7` | 3,136 × 9,408 | **446.7** | 1,420.5 | **0.31×** | 2,492 |
+| `pilot87` | 2,030 × 4,883 | **2,364.7** | 3,238.7 | **0.73×** | 9,962 |
+| `dfl001` | 6,071 × 12,230 | **3,847.4** | 4,154.4 | **0.93×** | 21,847 |
 
 ## Architecture
 
