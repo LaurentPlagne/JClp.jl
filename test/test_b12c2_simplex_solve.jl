@@ -1,5 +1,10 @@
 using JClp
 using Test
+using Random
+
+if !isdefined(@__MODULE__, :check_kkt_optimal)
+    include("kkt_utils.jl")
+end
 
 @testset "B12c-2: Standalone pure-Julia dual!, primal! & warm start" begin
     @testset "Toy 2x2 LP (min & max) with dual! and primal!" begin
@@ -198,5 +203,192 @@ using Test
         )
         @test JClp.primal!(mi) == JClp.CLP_STATUS_PRIMAL_INFEAS
         @test maximum(abs, mi.dual_row_sol) < 1e6
+    end
+
+    @testset "Dual perturbation (set_perturbation!, perturbation, KKT exactness & 0-alloc warm-start)" begin
+        # 1. API getters/setters and persistence across load_problem! & presolve
+        m_api = JClp.ClpSimplexModel()
+        @test JClp.perturbation(m_api) == 50
+        @test JClp.set_perturbation!(m_api, 100) == 100
+        @test JClp.perturbation(m_api) == 100
+        @test JClp.set_perturbation!(m_api, 102) == 102
+        @test JClp.perturbation(m_api) == 102
+        @test JClp.set_perturbation!(m_api, 50) == 50
+        @test JClp.perturbation(m_api) == 50
+
+        JClp.set_perturbation!(m_api, 102)
+        JClp.load_problem!(
+            m_api, 2, 2,
+            Int32[1, 3, 5], Int32[1, 2, 1, 2], Float64[1.0, 2.0, 1.0, 1.0],
+            Float64[0.0, 0.0], Float64[1e30, 1e30], Float64[-3.0, -2.0],
+            Float64[-1e30, -1e30], Float64[4.0, 6.0],
+        )
+        @test JClp.perturbation(m_api) == 102
+        ps_api = JClp.presolve(m_api)
+        @test ps_api.reduced.perturbation == 102
+        @test JClp.initial_solve!(m_api) == JClp.CLP_STATUS_OPTIMAL
+        assert_kkt_optimal(m_api; tol = 1e-8)
+
+        # 2. Synthetic dual-degenerate LP (tied costs & degenerate assignment structure)
+        n_assign = 12
+        nr_a = 2 * n_assign
+        nc_a = n_assign * n_assign
+        cs_a = Vector{Int32}(undef, nc_a + 1)
+        ci_a = Vector{Int32}(undef, 2 * nc_a)
+        ce_a = fill(1.0, 2 * nc_a)
+        obj_a = Vector{Float64}(undef, nc_a)
+        p_idx = 0
+        for i in 1:n_assign, j in 1:n_assign
+            col = (i - 1) * n_assign + j
+            cs_a[col] = Int32(p_idx + 1)
+            ci_a[p_idx + 1] = Int32(i)
+            ci_a[p_idx + 2] = Int32(n_assign + j)
+            p_idx += 2
+            obj_a[col] = float(((i * 5 + j * 7) % 4) + 1)
+        end
+        cs_a[nc_a + 1] = Int32(p_idx + 1)
+        clo_a = zeros(Float64, nc_a)
+        chi_a = fill(1.0, nc_a)
+        rhs_a = ones(Float64, nr_a)
+
+        objs_assign = Float64[]
+        for pert in (100, 50, 102)
+            md = JClp.ClpSimplexModel()
+            JClp.set_perturbation!(md, pert)
+            JClp.load_problem!(md, nr_a, nc_a, cs_a, ci_a, ce_a, clo_a, chi_a, obj_a, rhs_a, rhs_a)
+            @test JClp.dual!(md; max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            assert_kkt_optimal(md; tol = 1e-8)
+            push!(objs_assign, md.objective_value)
+        end
+        @test objs_assign[1] ≈ objs_assign[2] atol=1e-9
+        @test objs_assign[1] ≈ objs_assign[3] atol=1e-9
+
+        # Synthetic tied-zero-cost sparse degenerate LP (min & max) + warm-start
+        rng = MersenneTwister(77)
+        nr_d = 40
+        nc_d = 80
+        cs_d = Int32[1]
+        ci_d = Int32[]
+        ce_d = Float64[]
+        for j in 1:nc_d
+            for r in sort(randperm(rng, nr_d)[1:4])
+                push!(ci_d, Int32(r))
+                push!(ce_d, float(rand(rng, (-2, -1, 1, 2))))
+            end
+            push!(cs_d, Int32(length(ci_d) + 1))
+        end
+        obj_d = [j <= div(nc_d, 2) ? 0.0 : float((j % 3) + 1) for j in 1:nc_d]
+        clo_d = zeros(Float64, nc_d)
+        chi_d = fill(5.0, nc_d)
+        x_feas = [j <= div(nc_d, 3) ? 0.0 : 1.0 for j in 1:nc_d]
+        ax_d = zeros(Float64, nr_d)
+        for j in 1:nc_d, k in cs_d[j]:(cs_d[j + 1] - 1)
+            ax_d[ci_d[k]] += ce_d[k] * x_feas[j]
+        end
+        rlo_d = [i <= div(nr_d, 2) ? ax_d[i] : -1e30 for i in 1:nr_d]
+        rhi_d = [i <= div(nr_d, 2) ? ax_d[i] : ax_d[i] + (i % 2 == 0 ? 0.0 : 1.0) for i in 1:nr_d]
+
+        objs_d = Float64[]
+        for pert in (100, 50, 102)
+            md = JClp.ClpSimplexModel()
+            JClp.set_perturbation!(md, pert)
+            JClp.load_problem!(md, nr_d, nc_d, cs_d, ci_d, ce_d, clo_d, chi_d, obj_d, rlo_d, rhi_d)
+            @test JClp.dual!(md; max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            assert_kkt_optimal(md; tol = 1e-8)
+            push!(objs_d, md.objective_value)
+
+            # Warm-start bound perturbations under pert = 50 and pert = 102 (and 100)
+            JClp.set_col_bounds!(md, 1, 0.25, 4.0)
+            JClp.set_row_bounds!(md, nr_d, -1e30, rhi_d[nr_d] + 0.5)
+            @test JClp.dual!(md; warm_start = true, max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            assert_kkt_optimal(md; tol = 1e-8)
+        end
+        @test objs_d[1] ≈ objs_d[2] atol=1e-8
+        @test objs_d[1] ≈ objs_d[3] atol=1e-8
+
+        # 3. Infeasible LP & max_iterations limit restore unperturbed costs cleanly
+        m_inf = JClp.ClpSimplexModel()
+        JClp.set_perturbation!(m_inf, 102)
+        JClp.load_problem!(
+            m_inf, 2, 2,
+            Int32[1, 3, 5], Int32[1, 2, 1, 2], Float64[1.0, 1.0, 1.0, 1.0],
+            Float64[0.0, 0.0], Float64[1e30, 1e30], Float64[1.0, 1.0],
+            Float64[-1e30, 5.0], Float64[2.0, 1e30],
+        )
+        @test JClp.dual!(m_inf) == JClp.CLP_STATUS_PRIMAL_INFEAS
+
+        # 4. e226.mps with perturbation = 50, 100, 102 (cold, warm-start, initial_solve!, max_iterations)
+        sample_dir = "/Users/laurentplagne/Projects/Clp/parity/data/Sample"
+        e226_path = joinpath(sample_dir, "e226.mps")
+        if isfile(e226_path)
+            e226_objs = Float64[]
+            for pert in (100, 50, 102)
+                me = JClp.ClpSimplexModel()
+                JClp.set_perturbation!(me, pert)
+                JClp.read_mps!(me, e226_path)
+                @test JClp.dual!(me; max_iterations = 10000) == JClp.CLP_STATUS_OPTIMAL
+                assert_kkt_optimal(me; tol = 1e-8)
+                push!(e226_objs, me.objective_value)
+
+                # Warm-start under perturbation = 50 / 102 / 100
+                JClp.set_row_bounds!(me, 10, me.row_lower[10], me.row_upper[10] + 5.0)
+                @test JClp.dual!(me; warm_start = true, max_iterations = 10000) == JClp.CLP_STATUS_OPTIMAL
+                assert_kkt_optimal(me; tol = 1e-8)
+
+                # Also test initial_solve! with kwarg perturbation
+                me_init = JClp.ClpSimplexModel()
+                JClp.read_mps!(me_init, e226_path)
+                @test JClp.initial_solve!(me_init; perturbation = pert, max_iterations = 10000) == JClp.CLP_STATUS_OPTIMAL
+                @test me_init.objective_value ≈ -11.6389290663705 rtol=1e-7
+                assert_kkt_optimal(me_init; tol = 1e-8)
+            end
+            @test e226_objs[1] ≈ -11.6389290663705 rtol=1e-8
+            @test e226_objs[1] ≈ e226_objs[2] atol=1e-9
+            @test e226_objs[1] ≈ e226_objs[3] atol=1e-9
+
+            # Hit MAX_ITERATIONS while perturbed -> costs restored cleanly
+            me_lim = JClp.ClpSimplexModel()
+            JClp.set_perturbation!(me_lim, 102)
+            JClp.read_mps!(me_lim, e226_path)
+            @test JClp.dual!(me_lim; max_iterations = 2) == JClp.CLP_STATUS_MAX_ITERATIONS
+            @test me_lim.cost == me_lim.saved_cost
+            @test all(isfinite, me_lim.dual_row_sol)
+            @test all(isfinite, me_lim.reduced_cost)
+        end
+
+        # 5. Strictly 0 bytes allocated in dual!(m; warm_start=true) for perturbation = 100 and 50
+        function _measure_ws_dual_alloc(pert::Int)
+            m = JClp.ClpSimplexModel()
+            JClp.set_perturbation!(m, pert)
+            JClp.load_problem!(m, nr_d, nc_d, cs_d, ci_d, ce_d, clo_d, chi_d, obj_d, rlo_d, rhi_d)
+            @test JClp.dual!(m; max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            JClp.set_col_bounds!(m, 1, 0.25, 4.0)
+            JClp.set_row_bounds!(m, nr_d, -1e30, rhi_d[nr_d] + 0.5)
+            @test JClp.dual!(m; warm_start = true, max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            JClp.set_col_bounds!(m, 1, 0.0, 5.0)
+            JClp.set_row_bounds!(m, nr_d, -1e30, rhi_d[nr_d])
+            return @allocated JClp.dual!(m; warm_start = true, max_iterations = 5000)
+        end
+        @test _measure_ws_dual_alloc(100) == 0
+        @test _measure_ws_dual_alloc(50) == 0
+
+        if isfile(e226_path)
+            function _measure_e226_ws_alloc(pert::Int)
+                m = JClp.ClpSimplexModel()
+                JClp.set_perturbation!(m, pert)
+                JClp.read_mps!(m, e226_path)
+                @test JClp.dual!(m; max_iterations = 10000) == JClp.CLP_STATUS_OPTIMAL
+                JClp.set_row_bounds!(m, 10, m.row_lower[10], m.row_upper[10] + 5.0)
+                @test JClp.dual!(m; warm_start = true, max_iterations = 10000) == JClp.CLP_STATUS_OPTIMAL
+                JClp.set_row_bounds!(m, 10, m.row_lower[10], m.row_upper[10] - 5.0)
+                allocs = @allocated JClp.dual!(m; warm_start = true, max_iterations = 10000)
+                @test m.problem_status == JClp.CLP_STATUS_OPTIMAL
+                assert_kkt_optimal(m; tol = 1e-8)
+                return allocs
+            end
+            @test _measure_e226_ws_alloc(100) == 0
+            @test _measure_e226_ws_alloc(50) == 0
+            @test _measure_e226_ws_alloc(102) == 0
+        end
     end
 end

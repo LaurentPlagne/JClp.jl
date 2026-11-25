@@ -1136,6 +1136,7 @@ function presolve(m::ClpSimplexModel; max_passes::Int = 15)::_PresolvedProblem
     red.scaling_flag = m.scaling_flag
     red.primal_tol = m.primal_tol
     red.dual_tol = m.dual_tol
+    red.perturbation = m.perturbation
     load_problem!(
         red, rn, cn, red_starts, red_indices, red_elements,
         red_clo, red_chi, red_obj, red_rlo, red_rhi;
@@ -1534,7 +1535,7 @@ end
 
 """
     initial_solve!(m::ClpSimplexModel; do_presolve::Bool=true, max_iterations::Int=m.max_iterations,
-                   scaling::Int=m.scaling_flag, polish::Bool=false) -> Int
+                   scaling::Int=m.scaling_flag, perturbation::Int=m.perturbation, polish::Bool=false) -> Int
 
 Full standalone pure-Julia LP solver equivalent to `ClpSimplex::initialSolve()`:
 runs pure-Julia presolve -> solves reduced LP with `dual!` -> postsolves back to
@@ -1545,10 +1546,11 @@ function initial_solve!(
     do_presolve::Bool = true,
     max_iterations::Int = m.max_iterations,
     scaling::Int = m.scaling_flag,
+    perturbation::Int = m.perturbation,
     polish::Bool = false,
 )::Int
     if !do_presolve || m.nrows == 0 || m.ncols == 0
-        return dual!(m; max_iterations = max_iterations, scaling = scaling)
+        return dual!(m; max_iterations = max_iterations, scaling = scaling, perturbation = perturbation)
     end
 
     ps = presolve(m)
@@ -1558,7 +1560,7 @@ function initial_solve!(
         return m.problem_status
     end
 
-    st = dual!(ps.reduced; max_iterations = max_iterations, scaling = scaling)
+    st = dual!(ps.reduced; max_iterations = max_iterations, scaling = scaling, perturbation = perturbation)
     postsolve!(m, ps)
 
     # Verify relative primal feasibility of postsolved solution; polish only if needed
@@ -1588,7 +1590,7 @@ function initial_solve!(
             prev_iters = m.number_iterations
             scale_model!(m; mode = scaling)
             m.has_row_copy = false
-            st2 = dual!(m; max_iterations = max_iterations, warm_start = false, scaling = scaling)
+            st2 = dual!(m; max_iterations = max_iterations, warm_start = false, scaling = scaling, perturbation = perturbation)
             m.number_iterations += prev_iters
             return st2
         end

@@ -12,6 +12,7 @@ import MathOptInterface as MOI
         @test MOI.get(opt, MOI.RawOptimizerAttribute("presolve")) === true
         @test MOI.get(opt, MOI.RawOptimizerAttribute("algorithm")) == "initial"
         @test MOI.get(opt, MOI.RawOptimizerAttribute("max_iterations")) == Int(typemax(Int32))
+        @test MOI.get(opt, MOI.RawOptimizerAttribute("perturbation")) == 50
         @test MOI.get(opt, MOI.TerminationStatus()) == MOI.OPTIMIZE_NOT_CALLED
         @test MOI.get(opt, MOI.PrimalStatus()) == MOI.NO_SOLUTION
         @test MOI.get(opt, MOI.DualStatus()) == MOI.NO_SOLUTION
@@ -23,6 +24,7 @@ import MathOptInterface as MOI
         MOI.set(opt, MOI.RawOptimizerAttribute("presolve"), false)
         MOI.set(opt, MOI.RawOptimizerAttribute("max_iterations"), 1234)
         MOI.set(opt, MOI.RawOptimizerAttribute("algorithm"), "dual")
+        MOI.set(opt, MOI.RawOptimizerAttribute("perturbation"), 102)
         MOI.set(opt, MOI.Name(), "my_lp")
         MOI.empty!(opt)
         @test MOI.is_empty(opt)
@@ -30,6 +32,7 @@ import MathOptInterface as MOI
         @test MOI.get(opt, MOI.RawOptimizerAttribute("presolve")) === false
         @test MOI.get(opt, MOI.RawOptimizerAttribute("max_iterations")) == 1234
         @test MOI.get(opt, MOI.RawOptimizerAttribute("algorithm")) == "dual"
+        @test MOI.get(opt, MOI.RawOptimizerAttribute("perturbation")) == 102
         @test MOI.get(opt, MOI.Name()) == ""
 
         # Invalid RawOptimizerAttribute errors
@@ -39,6 +42,8 @@ import MathOptInterface as MOI
         @test_throws MOI.SetAttributeNotAllowed MOI.set(opt, MOI.RawOptimizerAttribute("algorithm"), "barrier")
         @test_throws MOI.SetAttributeNotAllowed MOI.set(opt, MOI.RawOptimizerAttribute("presolve"), "yes")
         @test_throws MOI.SetAttributeNotAllowed MOI.set(opt, MOI.RawOptimizerAttribute("max_iterations"), -5)
+        @test_throws MOI.SetAttributeNotAllowed MOI.set(opt, MOI.RawOptimizerAttribute("perturbation"), "auto")
+        @test_throws MOI.SetAttributeNotAllowed MOI.set(opt, MOI.RawOptimizerAttribute("perturbation"), true)
 
         # Keyword constructor, duplicate terms, affine constant, obj constant, & all 3 algorithms
         # min 2*x1 + 3*x2 + 10 s.t. x1 + x2 + 1 >= 5, 0 <= x1 <= 10, x2 >= 0 -> opt x1=4, x2=0, obj=18
@@ -65,7 +70,8 @@ import MathOptInterface as MOI
                     10.0,
                 ),
             )
-            o = JClp.Optimizer(; presolve = presolve, algorithm = alg, silent = true)
+            o = JClp.Optimizer(; presolve = presolve, algorithm = alg, perturbation = 102, silent = true)
+            @test MOI.get(o, MOI.RawOptimizerAttribute("perturbation")) == 102
             imap, copied = MOI.optimize!(o, src)
             @test copied
             @test MOI.get(o, MOI.TerminationStatus()) == MOI.OPTIMAL

@@ -42,6 +42,7 @@ mutable struct MOIOptimizer <: MOI.AbstractOptimizer
     presolve::Bool
     max_iterations::Int
     algorithm::String
+    perturbation::Int
     sense::MOI.OptimizationSense
     obj_constant::Float64
     has_objective::Bool
@@ -60,6 +61,7 @@ function MOIOptimizer(; kwargs...)
         true,
         Int(typemax(Int32)),
         "initial",
+        50,
         MOI.FEASIBILITY_SENSE,
         0.0,
         false,
@@ -96,6 +98,7 @@ end
 function MOI.empty!(opt::MOIOptimizer)::Nothing
     opt.inner = JClp.ClpSimplexModel()
     opt.inner.max_iterations = opt.max_iterations
+    opt.inner.perturbation = opt.perturbation
     opt.sense = MOI.FEASIBILITY_SENSE
     opt.obj_constant = 0.0
     opt.has_objective = false
@@ -144,7 +147,8 @@ function MOI.supports(
 )::Bool
     return attr.name == "presolve" ||
            attr.name == "max_iterations" ||
-           attr.name == "algorithm"
+           attr.name == "algorithm" ||
+           attr.name == "perturbation"
 end
 
 # ==============================================================================
@@ -177,6 +181,8 @@ function MOI.get(opt::MOIOptimizer, attr::MOI.RawOptimizerAttribute)
         return opt.max_iterations
     elseif attr.name == "algorithm"
         return opt.algorithm
+    elseif attr.name == "perturbation"
+        return opt.perturbation
     end
     throw(MOI.UnsupportedAttribute(attr))
 end
@@ -200,6 +206,11 @@ function MOI.set(opt::MOIOptimizer, attr::MOI.RawOptimizerAttribute, val)::Nothi
             throw(MOI.SetAttributeNotAllowed(attr, "Expected algorithm in (\"initial\", \"dual\", \"primal\"), got \"$alg\"."))
         end
         opt.algorithm = alg
+        return nothing
+    elseif attr.name == "perturbation"
+        (val isa Integer && !(val isa Bool)) || throw(MOI.SetAttributeNotAllowed(attr, "Expected Integer for \"perturbation\"."))
+        opt.perturbation = Int(val)
+        opt.inner.perturbation = opt.perturbation
         return nothing
     end
     throw(MOI.UnsupportedAttribute(attr))
@@ -549,6 +560,7 @@ function MOI.copy_to(dest::MOIOptimizer, src::MOI.ModelLike)::MOI.Utilities.Inde
         name = dest.name,
     )
     dest.inner.max_iterations = dest.max_iterations
+    dest.inner.perturbation = dest.perturbation
 
     return index_map
 end
@@ -561,6 +573,7 @@ function MOI.optimize!(opt::MOIOptimizer)::Nothing
     t0 = time_ns()
     m = opt.inner
     m.max_iterations = opt.max_iterations
+    m.perturbation = opt.perturbation
     if opt.algorithm == "initial"
         JClp.initial_solve!(m; do_presolve = opt.presolve, max_iterations = opt.max_iterations)
     elseif opt.algorithm == "dual"

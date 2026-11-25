@@ -8,6 +8,8 @@ const CLP_STATUS_DUAL_INFEAS      = 2   # primal unbounded
 const CLP_STATUS_MAX_ITERATIONS   = 3
 const CLP_STATUS_ERROR            = 4
 
+const _SM_EMPTY_F64 = Float64[]
+
 # ==============================================================================
 # Warm-start modification helpers (preserve m.status for re-optimization)
 # ==============================================================================
@@ -32,6 +34,24 @@ function set_obj_coeff!(m::ClpSimplexModel, j::Int, c::Float64)::Nothing
     @inbounds m.objective[j] = c
     return nothing
 end
+
+"""
+    set_perturbation!(m::ClpSimplexModel, value::Int) -> Int
+
+Set the dual simplex perturbation mode (`50` = automatic on degeneracy, `100` = disabled,
+`102` = eager/immediate) and return `value`.
+"""
+function set_perturbation!(m::ClpSimplexModel, value::Int)::Int
+    m.perturbation = value
+    return value
+end
+
+"""
+    perturbation(m::ClpSimplexModel) -> Int
+
+Return the current dual simplex perturbation mode for `m`.
+"""
+perturbation(m::ClpSimplexModel)::Int = m.perturbation
 
 @inline function _sm_clear_flags!(status::Vector{UInt8})::Int
     n_unflagged = 0
@@ -181,9 +201,97 @@ function _sm_bounds_feasible(m::ClpSimplexModel)::Bool
     return true
 end
 
+function _sm_dual_perturb!(m::ClpSimplexModel, pert_mode::Int)::Nothing
+    nrows = m.nrows
+    ncols = m.ncols
+    ntotal = nrows + ncols
+    @inbounds for seq in 1:ntotal
+        m.saved_cost[seq] = m.cost[seq]
+    end
+    max_c = 0.0
+    @inbounds for j in 1:ncols
+        ac = abs(m.cost[j])
+        if ac > max_c
+            max_c = ac
+        end
+    end
+    base_scale = pert_mode == 102 ? 1.0e-5 : 1.0e-6
+    pert_scale = clamp(base_scale * max(1.0, max_c), 1.0e-7, 1.0e-4)
+    state = UInt64(0x9e3779b97f4a7c15) ⊻ UInt64(m.rng_seed)
+    @inbounds for seq in 1:ntotal
+        st = _sb_get_status(m.status[seq])
+        if st == CLP_STATUS_AT_LOWER
+            state = state * UInt64(6364136223846793005) + UInt64(1442695040888963407)
+            u = Float64(state >>> 11) * 0x1.0p-53
+            m.cost[seq] += pert_scale * (0.25 + u)
+        elseif st == CLP_STATUS_AT_UPPER
+            state = state * UInt64(6364136223846793005) + UInt64(1442695040888963407)
+            u = Float64(state >>> 11) * 0x1.0p-53
+            m.cost[seq] -= pert_scale * (0.25 + u)
+        end
+    end
+    guts_of_solution!(m; do_primals = false, do_duals = true, check_infeas = true, algorithm = -1)
+    return nothing
+end
+
+function _sm_dual_unperturb!(m::ClpSimplexModel, recompute::Bool = true)::Nothing
+    ntotal = m.nrows + m.ncols
+    @inbounds for seq in 1:ntotal
+        m.cost[seq] = m.saved_cost[seq]
+    end
+    if recompute
+        guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
+    end
+    return nothing
+end
+
+function _sm_restore_true_bounds!(m::ClpSimplexModel)::Nothing
+    nrows = m.nrows
+    ncols = m.ncols
+    if m.has_scale
+        clp_create_rim1!(
+            m.lower, m.upper, m.col_lower, m.col_upper, m.row_lower, m.row_upper,
+            m.row_scale, m.inv_col_scale, nrows, 0, ncols, nrows, ncols, m.special_options, false,
+            m.rhs_scale, m.primal_tol,
+        )
+    else
+        clp_create_rim1!(
+            m.lower, m.upper, m.col_lower, m.col_upper, m.row_lower, m.row_upper,
+            nothing, nothing, nrows, 0, ncols, nrows, ncols, m.special_options, false,
+            m.rhs_scale, m.primal_tol,
+        )
+    end
+    return nothing
+end
+
+function _sm_reset_fake_bounds!(m::ClpSimplexModel)::Nothing
+    ntotal = m.nrows + m.ncols
+    @inbounds for seq in 1:ntotal
+        st = _sb_get_status(m.status[seq])
+        if st == CLP_STATUS_AT_UPPER && m.upper[seq] >= 1.0e20
+            if m.lower[seq] > -1.0e20
+                m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_LOWER)
+                m.solution[seq] = m.lower[seq]
+            else
+                m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
+                m.solution[seq] = 0.0
+            end
+        elseif st == CLP_STATUS_AT_LOWER && m.lower[seq] <= -1.0e20
+            if m.upper[seq] < 1.0e20
+                m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_UPPER)
+                m.solution[seq] = m.upper[seq]
+            else
+                m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
+                m.solution[seq] = 0.0
+            end
+        end
+    end
+    return nothing
+end
+
 """
     dual!(m::ClpSimplexModel; max_iterations=m.max_iterations, warm_start=false,
-          scaling=m.scaling_flag, exact_weights=false) -> Int
+          scaling=m.scaling_flag, exact_weights=false, perturbation=m.perturbation) -> Int
 
 Solve `m` using the standalone pure-Julia Dual Simplex method (`clp_dual_while_iterating!`).
 Returns `m.problem_status`: `0` (optimal), `1` (primal infeasible), `2` (dual infeasible /
@@ -195,6 +303,7 @@ function dual!(
     warm_start::Bool = false,
     scaling::Int = m.scaling_flag,
     exact_weights::Bool = false,
+    perturbation::Int = m.perturbation,
 )::Int
     nrows = m.nrows
     ncols = m.ncols
@@ -288,9 +397,12 @@ function dual!(
     drs_alt_val = m.pcs_alt_val
     drs_alt_idx = m.pcs_alt_idx
     drs_alt_nnz = 0
-    saved_weights_val = zeros(Float64, nrows)
-    saved_weights_idx = zeros(Int32, nrows)
-    saved_back = zeros(Int32, ntotal)
+    saved_weights_val = m.drs_saved_val
+    saved_weights_idx = m.drs_saved_idx
+    saved_back = m.drs_saved_back
+    fill!(saved_weights_val, 0.0)
+    fill!(saved_weights_idx, Int32(0))
+    fill!(saved_back, Int32(0))
     weights_initialized = false
 
     # Local loop scalars for clp_dual_while_iterating!
@@ -306,20 +418,26 @@ function dual!(
     spare_int0 = 0; spare_int1 = 0
     spare_dbl0 = 0.0; spare_dbl2 = 0.0; spare_dbl3 = 0.0
 
-    # Empty typed views for unscaled mode
-    empty_f = Float64[]
-    rs_v = m.has_scale ? m.row_scale : empty_f
-    cs_v = m.has_scale ? m.col_scale : empty_f
-    ics_v = m.has_scale ? m.inv_col_scale : empty_f
+    # Shared empty typed buffer for unscaled mode (zero allocation)
+    rs_v = m.has_scale ? m.row_scale : _SM_EMPTY_F64
+    cs_v = m.has_scale ? m.col_scale : _SM_EMPTY_F64
+    ics_v = m.has_scale ? m.inv_col_scale : _SM_EMPTY_F64
 
     outer_iters = 0
     max_outer = min(2000, max(200, max_iterations))
     infeas_confirm = 0
     fake_bumps = 0
     force_primal_cleanup = false
+    is_perturbed = false
+    perturbation_done = false
+    prev_iter = 0
+    prev_obj = 0.0
+    prev_outer_iter = -1
+    stall_count = 0
 
     while outer_iters < max_outer
         outer_iters += 1
+        m.problem_status = -1
         _sm_clear_workspaces!(m)
 
         # Save Dual Steepest weights before refactorization reorders pivot_var
@@ -363,41 +481,22 @@ function dual!(
         if m.num_primal_infeas == 0 && m.drs_infeas_nnz == 0
             if number_fake > 0
                 # Restore true bounds and re-check
-                rs_opt = m.has_scale ? m.row_scale : nothing
-                ics_opt = m.has_scale ? m.inv_col_scale : nothing
-                clp_create_rim1!(
-                    m.lower, m.upper, m.col_lower, m.col_upper, m.row_lower, m.row_upper,
-                    rs_opt, ics_opt, nrows, 0, ncols, nrows, ncols, m.special_options, false,
-                    m.rhs_scale, m.primal_tol,
-                )
+                _sm_restore_true_bounds!(m)
                 # Reset any nonbasic variable that was sitting on a fake upper/lower bound
-                @inbounds for seq in 1:ntotal
-                    st = _sb_get_status(m.status[seq])
-                    if st == CLP_STATUS_AT_UPPER && m.upper[seq] >= 1.0e20
-                        if m.lower[seq] > -1.0e20
-                            m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_LOWER)
-                            m.solution[seq] = m.lower[seq]
-                        else
-                            m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
-                            m.solution[seq] = 0.0
-                        end
-                    elseif st == CLP_STATUS_AT_LOWER && m.lower[seq] <= -1.0e20
-                        if m.upper[seq] < 1.0e20
-                            m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_UPPER)
-                            m.solution[seq] = m.upper[seq]
-                        else
-                            m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
-                            m.solution[seq] = 0.0
-                        end
-                    end
-                end
+                _sm_reset_fake_bounds!(m)
                 number_fake = 0
+                if is_perturbed
+                    _sm_dual_unperturb!(m, false)
+                    is_perturbed = false
+                    perturbation_done = true
+                end
                 guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
                 if m.num_primal_infeas == 0 && m.num_dual_infeas == 0
                     m.problem_status = CLP_STATUS_OPTIMAL
                     break
                 elseif m.num_dual_infeas > 0 && m.num_primal_infeas == 0
                     # Primal feasible & dual infeasible -> finish with primal simplex!
+                    force_primal_cleanup = true
                     break
                 elseif fake_bumps < 2 && dual_bound < 1.0e15
                     fake_bumps += 1
@@ -408,11 +507,25 @@ function dual!(
                     force_primal_cleanup = true
                     break
                 end
+            elseif is_perturbed
+                _sm_dual_unperturb!(m, true)
+                is_perturbed = false
+                perturbation_done = true
+                if m.num_primal_infeas == 0 && m.num_dual_infeas == 0
+                    m.problem_status = CLP_STATUS_OPTIMAL
+                    break
+                elseif m.num_primal_infeas == 0 && m.num_dual_infeas > 0
+                    force_primal_cleanup = true
+                    break
+                else
+                    continue
+                end
             elseif m.num_dual_infeas == 0
                 m.problem_status = CLP_STATUS_OPTIMAL
                 break
             else
                 # Primal feasible but dual infeasible -> switch to primal cleanup
+                force_primal_cleanup = true
                 break
             end
         end
@@ -420,6 +533,39 @@ function dual!(
         if m.number_iterations >= m.max_iterations
             m.problem_status = CLP_STATUS_MAX_ITERATIONS
             break
+        end
+
+        # Activate dual perturbation if configured and triggered
+        if !is_perturbed && !perturbation_done && perturbation != 100
+            if perturbation == 102
+                if m.num_dual_infeas == 0 && m.num_primal_infeas > 0
+                    _sm_dual_perturb!(m, perturbation)
+                    is_perturbed = true
+                end
+            elseif perturbation < 100
+                if outer_iters == 1
+                    prev_iter = m.number_iterations
+                    prev_obj = m.objective_value
+                    prev_outer_iter = m.number_iterations
+                else
+                    obj_tol = 1.0e-9 * max(1.0, abs(m.objective_value))
+                    if abs(m.objective_value - prev_obj) > obj_tol
+                        prev_iter = m.number_iterations
+                        prev_obj = m.objective_value
+                    end
+                    stalled_zero = (m.number_iterations == prev_outer_iter)
+                    stall_count = stalled_zero ? (stall_count + 1) : 0
+                    prev_outer_iter = m.number_iterations
+                    if m.num_primal_infeas > 0 && (
+                        (m.number_iterations - prev_iter >= 10 && abs(m.objective_value - prev_obj) <= obj_tol) ||
+                        m.force_factorization > 0 ||
+                        stall_count >= 2
+                    )
+                        _sm_dual_perturb!(m, perturbation)
+                        is_perturbed = true
+                    end
+                end
+            end
         end
 
         # Run pure-Julia inner dual loop!
@@ -489,11 +635,20 @@ function dual!(
                 else
                     infeas_confirm += 1
                     if infeas_confirm >= 2
+                        if is_perturbed
+                            _sm_dual_unperturb!(m, true)
+                            is_perturbed = false
+                            perturbation_done = true
+                            infeas_confirm = 0
+                            m.problem_status = -1
+                            continue
+                        end
                         if number_fake > 0
                             # Fake bounds may have caused primal infeasibility -> verify with primal!
                             m.problem_status = -1
                             m.num_primal_infeas = 0
                             m.num_dual_infeas = 1
+                            force_primal_cleanup = true
                             break
                         end
                         m.problem_status = CLP_STATUS_PRIMAL_INFEAS
@@ -507,6 +662,13 @@ function dual!(
             infeas_confirm = 0
             _sm_clear_flags!(m.status)
             if m.drs_infeas_nnz == 0 && m.num_primal_infeas > 0 && m.cf.lu.npivots == 0
+                if is_perturbed
+                    _sm_dual_unperturb!(m, true)
+                    is_perturbed = false
+                    perturbation_done = true
+                    m.problem_status = -1
+                    continue
+                end
                 if number_fake > 0
                     force_primal_cleanup = true
                 else
@@ -525,6 +687,17 @@ function dual!(
         end
     end
 
+    # Guarantee unperturbed costs and exact unperturbed duals before delete_rim!/primal!
+    if is_perturbed
+        _sm_dual_unperturb!(m, m.cf.lu.nrows > 0 && m.cf.lu.status == 0)
+        is_perturbed = false
+        perturbation_done = true
+        if m.problem_status == CLP_STATUS_OPTIMAL && m.num_dual_infeas > 0 && m.num_primal_infeas == 0
+            m.problem_status = -1
+            force_primal_cleanup = true
+        end
+    end
+
     # If dual exited with primal-feasible (or fake-bounded) basis needing primal cleanup,
     # reset any nonbasic variable sitting on an infinite bound before delete_rim!/primal!
     need_primal_cleanup = force_primal_cleanup || (m.problem_status == -1 && m.num_primal_infeas == 0 && m.num_dual_infeas > 0)
@@ -532,38 +705,13 @@ function dual!(
         m.problem_status = CLP_STATUS_MAX_ITERATIONS
     end
     if number_fake > 0
-        rs_opt = m.has_scale ? m.row_scale : nothing
-        ics_opt = m.has_scale ? m.inv_col_scale : nothing
-        clp_create_rim1!(
-            m.lower, m.upper, m.col_lower, m.col_upper, m.row_lower, m.row_upper,
-            rs_opt, ics_opt, nrows, 0, ncols, nrows, ncols, m.special_options, false,
-            m.rhs_scale, m.primal_tol,
-        )
+        _sm_restore_true_bounds!(m)
     end
     @inbounds for seq in 1:ntotal
         m.status[seq] &= ~UInt8(24)
     end
     if need_primal_cleanup
-        @inbounds for seq in 1:ntotal
-            st = _sb_get_status(m.status[seq])
-            if st == CLP_STATUS_AT_UPPER && m.upper[seq] >= 1.0e20
-                if m.lower[seq] > -1.0e20
-                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_LOWER)
-                    m.solution[seq] = m.lower[seq]
-                else
-                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
-                    m.solution[seq] = 0.0
-                end
-            elseif st == CLP_STATUS_AT_LOWER && m.lower[seq] <= -1.0e20
-                if m.upper[seq] < 1.0e20
-                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_AT_UPPER)
-                    m.solution[seq] = m.upper[seq]
-                else
-                    m.status[seq] = _sb_set_status(m.status[seq], CLP_STATUS_IS_FREE)
-                    m.solution[seq] = 0.0
-                end
-            end
-        end
+        _sm_reset_fake_bounds!(m)
     end
     delete_rim!(m)
     if need_primal_cleanup
@@ -787,9 +935,8 @@ function primal!(
     create_rim!(m)
 
     elems = _sm_active_elements(m)
-    empty_f = Float64[]
-    rs_v = m.has_scale ? m.row_scale : empty_f
-    cs_v = m.has_scale ? m.col_scale : empty_f
+    rs_v = m.has_scale ? m.row_scale : _SM_EMPTY_F64
+    cs_v = m.has_scale ? m.col_scale : _SM_EMPTY_F64
 
     _sm_pcs_init_weights!(m)
     m.pcs_mode = 3

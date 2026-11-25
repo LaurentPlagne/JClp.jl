@@ -87,6 +87,9 @@ mutable struct ClpSimplexModel
     drs_infeas_idx::Vector{Int32}
     drs_infeas_nnz::Int
     drs_mode::Int
+    drs_saved_val::Vector{Float64}
+    drs_saved_idx::Vector{Int32}
+    drs_saved_back::Vector{Int32}
 
     # Primal Column Steepest state (B12b / B12c-2)
     pcs_weights::Vector{Float64}
@@ -136,6 +139,8 @@ mutable struct ClpSimplexModel
     alpha_accuracy::Float64
     acceptable_pivot::Float64
     rng_seed::UInt32
+    perturbation::Int
+    saved_cost::Vector{Float64}
 end
 
 function ClpSimplexModel()
@@ -153,11 +158,12 @@ function ClpSimplexModel()
         Float64[], Int32[], Float64[], Int32[],
         UInt8[], Float64[], Float64[], Int32[],
         Float64[], Float64[], Int32[], 0, 3,
+        Float64[], Int32[], Int32[],
         Float64[], UInt32[], Float64[], Int32[], 0, Float64[], Int32[], 0, 3, 0, 0, 1.0,
         fill(Int32(-1), CLP_CYCLE), fill(Int32(-1), CLP_CYCLE), zeros(Int8, CLP_CYCLE), 0,
         1.0e-7, 1.0e-7, 1.0e-13, 1.0e10, 1.0e15, typemax(Int32), 0, 0,
         -1, 0, 0, 0.0, 0.0, 0, 0.0, 0.0, 0, 0.0,
-        -1, -1, 0, 0, 0, -1.0, 1.0e-9, UInt32(1234567),
+        -1, -1, 0, 0, 0, -1.0, 1.0e-9, UInt32(1234567), 50, Float64[],
     )
 end
 
@@ -272,6 +278,9 @@ function load_problem!(
     m.drs_infeas_val = zeros(Float64, nrows)
     m.drs_infeas_idx = zeros(Int32, nrows)
     m.drs_infeas_nnz = 0
+    m.drs_saved_val = zeros(Float64, nrows)
+    m.drs_saved_idx = zeros(Int32, nrows)
+    m.drs_saved_back = zeros(Int32, ntotal)
 
     ref_words = (ntotal + 31) >> 5
     m.pcs_weights = ones(Float64, ntotal)
@@ -309,6 +318,7 @@ function load_problem!(
     m.progress_flag = 0
     m.alpha_accuracy = -1.0
     m.acceptable_pivot = 1.0e-9
+    m.saved_cost = zeros(Float64, ntotal)
 
     all_slack_basis!(m)
     return m
@@ -728,24 +738,34 @@ function delete_rim!(m::ClpSimplexModel)::Nothing
     row_hi_w = @view m.upper[(ncols + 1):ntotal]
     col_dj_w = @view m.dj[1:ncols]
 
-    rs = m.has_scale ? m.row_scale : nothing
-    irs = m.has_scale ? m.inv_row_scale : nothing
-    cs = m.has_scale ? m.col_scale : nothing
-    ics = m.has_scale ? m.inv_col_scale : nothing
-
     @inbounds for i in 1:nrows
         m.dual_row_sol[i] = m.dual_work[i]
     end
-    clp_delete_rim_unscale!(
-        m.col_activity, m.reduced_cost, m.row_activity, m.dual_row_sol,
-        col_act_w, col_lo_w, col_hi_w, col_dj_w,
-        row_act_w, row_lo_w, row_hi_w,
-        m.col_lower, m.col_upper, m.row_lower, m.row_upper,
-        nothing, rs, irs, cs, ics, nothing,
-        nrows, ncols, true,
-        m.obj_scale, m.rhs_scale, m.primal_tol, m.dual_tol,
-        m.problem_status, m.secondary_status,
-    )
+    # Branch on has_scale so all arguments to clp_delete_rim_unscale! are concretely typed
+    # (avoiding 4-way Union{Nothing,Vector{Float64}} dynamic dispatch and SubArray boxing).
+    if m.has_scale
+        clp_delete_rim_unscale!(
+            m.col_activity, m.reduced_cost, m.row_activity, m.dual_row_sol,
+            col_act_w, col_lo_w, col_hi_w, col_dj_w,
+            row_act_w, row_lo_w, row_hi_w,
+            m.col_lower, m.col_upper, m.row_lower, m.row_upper,
+            nothing, m.row_scale, m.inv_row_scale, m.col_scale, m.inv_col_scale, nothing,
+            nrows, ncols, true,
+            m.obj_scale, m.rhs_scale, m.primal_tol, m.dual_tol,
+            m.problem_status, m.secondary_status,
+        )
+    else
+        clp_delete_rim_unscale!(
+            m.col_activity, m.reduced_cost, m.row_activity, m.dual_row_sol,
+            col_act_w, col_lo_w, col_hi_w, col_dj_w,
+            row_act_w, row_lo_w, row_hi_w,
+            m.col_lower, m.col_upper, m.row_lower, m.row_upper,
+            nothing, nothing, nothing, nothing, nothing, nothing,
+            nrows, ncols, true,
+            m.obj_scale, m.rhs_scale, m.primal_tol, m.dual_tol,
+            m.problem_status, m.secondary_status,
+        )
+    end
 
     if m.obj_sense != 1.0
         s = m.obj_sense
