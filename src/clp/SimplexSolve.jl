@@ -282,8 +282,8 @@ function _sm_dual_perturb!(m::ClpSimplexModel, pert_mode::Int)::Nothing
             max_c = ac
         end
     end
-    base_scale = pert_mode == 102 ? 1.0e-5 : 1.0e-6
-    pert_scale = clamp(base_scale * max(1.0, max_c), 1.0e-7, 1.0e-4)
+    base_scale = max(100.0 * m.dual_tol, 1.0e-5 * max(1.0, max_c))
+    pert_scale = clamp(base_scale, 1.0e-6, 1.0e-4)
     state = UInt64(0x9e3779b97f4a7c15) ⊻ UInt64(m.rng_seed)
     @inbounds for seq in 1:ntotal
         st = _sb_get_status(m.status[seq])
@@ -511,6 +511,7 @@ function dual!(
     prev_obj = 0.0
     prev_outer_iter = -1
     stall_count = 0
+    degen_trigger = false
 
     while outer_iters < max_outer
         outer_iters += 1
@@ -638,12 +639,14 @@ function dual!(
                     stall_count = stalled_zero ? (stall_count + 1) : 0
                     prev_outer_iter = m.number_iterations
                     if m.num_primal_infeas > 0 && (
+                        degen_trigger ||
                         (m.number_iterations - prev_iter >= 10 && abs(m.objective_value - prev_obj) <= obj_tol) ||
                         m.force_factorization > 0 ||
                         stall_count >= 2
                     )
                         _sm_dual_perturb!(m, perturbation)
                         is_perturbed = true
+                        degen_trigger = false
                     end
                 end
             end
@@ -653,6 +656,7 @@ function dual!(
         m.problem_status = -1
         ret_code = -1
         drs_alt_nnz = 0
+        max_zero_step = (!is_perturbed && !perturbation_done && perturbation < 100) ? 20 : 0
         dl_exit, prob_st, ret_code, n_iters, chg_made, prog_flg, mso,
         first_free, last_bad, ffac, pbad, number_fake, number_changed, n_pinf,
         drs_inf_nnz, drs_alt_nnz, _, _,
@@ -686,7 +690,10 @@ function dual!(
             val_in, lo_in, hi_in, dual_in, val_out, lo_out, hi_out, dual_out,
             theta, alpha, m.alpha_accuracy, m.objective_value,
             spare_int0, spare_int1, spare_dbl0, spare_dbl2, spare_dbl3, m.rng_seed,
+            max_zero_step,
         )
+
+        degen_trigger = (ret_code == -4)
 
         m.problem_status = prob_st
         m.number_iterations = n_iters

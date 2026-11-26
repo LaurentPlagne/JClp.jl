@@ -109,4 +109,79 @@ using Test
             end
         end
     end
+
+    @testset "Singular basis repair in internal_factorize!" begin
+        # 3x3 LP: col1 = [1, 1, 0], col2 = [2, 2, 0] (collinear!), col3 = [0, 0, 1]
+        # min -x1 - 3x2 - 2x3 s.t. x1 + 2x2 <= 4, x1 + 2x2 <= 6, x3 <= 5, x >= 0
+        # Optimal: x1 = 0, x2 = 2, x3 = 5 -> obj = -16
+        m = JClp.ClpSimplexModel()
+        JClp.load_problem!(
+            m, 3, 3,
+            Int32[1, 3, 5, 6],
+            Int32[1, 2, 1, 2, 3],
+            Float64[1.0, 1.0, 2.0, 2.0, 1.0],
+            Float64[0.0, 0.0, 0.0], Float64[1e30, 1e30, 1e30],
+            Float64[-1.0, -3.0, -2.0],
+            Float64[-1e30, -1e30, -1e30], Float64[4.0, 6.0, 5.0];
+            name = "singular3x3",
+        )
+        # Force singular basis: x1, x2, x3 all basic; slacks nonbasic
+        for j in 1:3
+            m.status[j] = UInt8(JClp.CLP_STATUS_BASIC)
+        end
+        for i in 1:3
+            m.status[3 + i] = UInt8(JClp.CLP_STATUS_AT_UPPER)
+        end
+        JClp.create_rim!(m)
+        # Deliberately scramble pivot_var order so slot i != matrix row i
+        m.pivot_var[1] = Int32(3)
+        m.pivot_var[2] = Int32(2)
+        m.pivot_var[3] = Int32(1)
+
+        @test JClp.internal_factorize!(m) == 0
+        @test length(unique(m.pivot_var[1:3])) == 3
+        basic_count = count(s -> JClp._sb_get_status(s) == JClp.CLP_STATUS_BASIC, m.status[1:6])
+        @test basic_count == 3
+        for r in 1:3
+            @test JClp._sb_get_status(m.status[Int(m.pivot_var[r])]) == JClp.CLP_STATUS_BASIC
+        end
+        # Non-singular column x3 must remain basic (proves targeted repair, not all-slack fallback)
+        @test Int32(3) in m.pivot_var[1:3]
+        JClp.guts_of_solution!(m)
+        @test m.largest_primal_err < 1e-12
+        @test m.largest_dual_err < 1e-12
+        JClp.delete_rim!(m)
+
+        # Now solve with dual! from the repaired basis
+        st = JClp.dual!(m; warm_start = true)
+        @test st == 0
+        @test m.objective_value ≈ -16.0 atol = 1e-10
+
+        # Also test dense-threshold fallback path on a singular 4x4 basis
+        m2 = JClp.ClpSimplexModel()
+        JClp.load_problem!(
+            m2, 4, 4,
+            Int32[1, 3, 5, 7, 8],
+            Int32[1, 2, 1, 2, 3, 4, 4],
+            Float64[1.0, 2.0, 3.0, 6.0, 1.0, 1.0, 1.0],
+            Float64[0.0, 0.0, 0.0, 0.0], Float64[1e30, 1e30, 1e30, 1e30],
+            Float64[-1.0, -4.0, -2.0, -3.0],
+            Float64[-1e30, -1e30, -1e30, -1e30], Float64[3.0, 6.0, 5.0, 8.0];
+            name = "singular4x4_dense",
+        )
+        for j in 1:4
+            m2.status[j] = UInt8(JClp.CLP_STATUS_BASIC)
+            m2.status[4 + j] = UInt8(JClp.CLP_STATUS_AT_UPPER)
+        end
+        JClp.create_rim!(m2)
+        m2.cf.lu.dense_threshold = 2
+        @test JClp.internal_factorize!(m2) == 0
+        @test m2.cf.lu.dense_threshold == 2
+        @test length(unique(m2.pivot_var[1:4])) == 4
+        @test count(s -> JClp._sb_get_status(s) == JClp.CLP_STATUS_BASIC, m2.status[1:8]) == 4
+        JClp.guts_of_solution!(m2)
+        @test m2.largest_primal_err < 1e-12
+        @test m2.largest_dual_err < 1e-12
+        JClp.delete_rim!(m2)
+    end
 end

@@ -241,6 +241,7 @@ function clp_fact_factorize_packed!(
 )::Int
     lu = cf.lu
     lu.status = -99
+    saved_dense_threshold = lu.dense_threshold
     n_col_basic = n_basic - n_row_basic
     col_slice = @view pivot_temp[(n_row_basic + 1):n_basic]
 
@@ -308,7 +309,7 @@ function clp_fact_factorize_packed!(
 
         if st == -99
             lu.area_factor *= 2.0
-        elseif st == -1 && (number_iterations == 0 || n_times_round > 2) && lu.dense_threshold != 0
+        elseif st == -1 && lu.dense_threshold != 0
             lu.dense_threshold = 0
             lu.status = -99
         end
@@ -331,6 +332,30 @@ function clp_fact_factorize_packed!(
         end
         finalize_basis_permutation!(lu)
         check_sparse!(lu)
+    elseif lu.status == -1
+        # Sparse LU confirmed genuine singularity: restore dense_threshold for future bases
+        if saved_dense_threshold != 0
+            lu.dense_threshold = saved_dense_threshold
+        end
+        # Leave pivot_variable in useful form for cleaning singular basis:
+        # pivot_variable[r] = sequence of basic variable that pivoted on row r,
+        # or Int32(-1) if row r was unpivoted.
+        piv_col = lu.pivot_col
+        @inbounds for r in 1:use_number_rows
+            pivot_variable[r] = Int32(-1)
+        end
+        @inbounds for i in 1:n_row_basic
+            r = Int(piv_col[i])
+            if r > 0
+                pivot_variable[r] = Int32(Int(pivot_temp[i]) + ncols_model)
+            end
+        end
+        @inbounds for i in (n_row_basic + 1):n_basic
+            r = Int(piv_col[i])
+            if r > 0
+                pivot_variable[r] = pivot_temp[i]
+            end
+        end
     end
 
     return lu.status

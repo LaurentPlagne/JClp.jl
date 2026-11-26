@@ -828,26 +828,16 @@ function internal_factorize!(m::ClpSimplexModel)::Int
         if status == 0
             return 0
         elseif status == -1
-            # Singular basis: replace unpivoted positions with slacks and retry
-            # Mark which slacks are already basic
-            @inbounds for i in 1:nrows
-                m.marked_buf[i] = UInt8(0)
-            end
-            @inbounds for i in 1:nrows
-                seq = Int(m.pivot_var[i])
-                if seq > ncols
-                    m.marked_buf[seq - ncols] = UInt8(1)
-                end
-            end
-            # Fall back to all-slack if repeated singularity, else replace unpivoted slots
+            # Singular basis: demote unpivoted basic variables to bounds and
+            # insert each unpivoted row's own slack.
             if attempt >= 4
                 all_slack_basis!(m)
             else
-                next_slack = 1
-                @inbounds for i in 1:nrows
-                    if m.cf.lu.permute[i] <= Int32(0)
-                        old_seq = Int(m.pivot_var[i])
-                        # Demote old_seq to bound
+                piv_col = m.cf.lu.pivot_col
+                # 1. Demote every basic variable in pivot_temp that failed to pivot
+                @inbounds for k in 1:n_basic
+                    if piv_col[k] <= Int32(0)
+                        old_seq = k <= n_row_basic ? (Int(m.pivot_temp[k]) + ncols) : Int(m.pivot_temp[k])
                         lo = m.lower[old_seq]
                         hi = m.upper[old_seq]
                         if lo == hi
@@ -863,15 +853,14 @@ function internal_factorize!(m::ClpSimplexModel)::Int
                             m.status[old_seq] = _sb_set_status(m.status[old_seq], CLP_STATUS_IS_FREE)
                             m.solution[old_seq] = 0.0
                         end
-                        while next_slack <= nrows && m.marked_buf[next_slack] != UInt8(0)
-                            next_slack += 1
-                        end
-                        if next_slack <= nrows
-                            new_seq = ncols + next_slack
-                            m.marked_buf[next_slack] = UInt8(1)
-                            m.status[new_seq] = _sb_set_status(m.status[new_seq], CLP_STATUS_BASIC)
-                            m.pivot_var[i] = Int32(new_seq)
-                        end
+                    end
+                end
+                # 2. For every unpivoted row r (pivot_var[r] <= 0), insert row r's slack
+                @inbounds for r in 1:nrows
+                    if m.pivot_var[r] <= Int32(0)
+                        new_seq = ncols + r
+                        m.status[new_seq] = _sb_set_status(m.status[new_seq], CLP_STATUS_BASIC)
+                        m.pivot_var[r] = Int32(new_seq)
                     end
                 end
             end

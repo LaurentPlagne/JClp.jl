@@ -304,11 +304,13 @@ function clp_dual_while_iterating!(
     spare_dbl2::Float64,
     spare_dbl3::Float64,
     rng_seed::UInt32,
+    max_zero_step::Int = 0,
 )
     ntotal = nrows + ncols
     r0_nnz = 0
     c0_nnz = 0
     best_possible = 1.0
+    consec_zero_steps = 0
 
     while problem_status == -1
         # 1. Check nextSuperBasic
@@ -755,6 +757,16 @@ function clp_dual_while_iterating!(
 
         if what_next == 1
             problem_status = -2
+        elseif what_next == 0 && max_zero_step > 0
+            if theta <= dual_tol
+                consec_zero_steps += 1
+                if consec_zero_steps >= max_zero_step
+                    problem_status = -2
+                    return_code = -4
+                end
+            else
+                consec_zero_steps = 0
+            end
         elseif what_next == 2
             problem_status = 3
             return_code = 3
