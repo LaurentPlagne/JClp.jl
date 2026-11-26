@@ -275,26 +275,20 @@ function _sm_dual_perturb!(m::ClpSimplexModel, pert_mode::Int)::Nothing
     @inbounds for seq in 1:ntotal
         m.saved_cost[seq] = m.cost[seq]
     end
-    max_c = 0.0
-    @inbounds for j in 1:ncols
-        ac = abs(m.cost[j])
-        if ac > max_c
-            max_c = ac
-        end
-    end
-    base_scale = max(100.0 * m.dual_tol, 1.0e-5 * max(1.0, max_c))
-    pert_scale = clamp(base_scale, 1.0e-6, 1.0e-4)
+    c_floor = (pert_mode == 102 ? 100.0 : 50.0) * m.dual_tol
     state = UInt64(0x9e3779b97f4a7c15) ⊻ UInt64(m.rng_seed)
     @inbounds for seq in 1:ntotal
         st = _sb_get_status(m.status[seq])
         if st == CLP_STATUS_AT_LOWER
+            pert_seq = clamp(c_floor + 1.0e-5 * abs(m.cost[seq]), 1.0e-7, 1.0e-4)
             state = state * UInt64(6364136223846793005) + UInt64(1442695040888963407)
             u = Float64(state >>> 11) * 0x1.0p-53
-            m.cost[seq] += pert_scale * (0.25 + u)
+            m.cost[seq] += pert_seq * (0.25 + u)
         elseif st == CLP_STATUS_AT_UPPER
+            pert_seq = clamp(c_floor + 1.0e-5 * abs(m.cost[seq]), 1.0e-7, 1.0e-4)
             state = state * UInt64(6364136223846793005) + UInt64(1442695040888963407)
             u = Float64(state >>> 11) * 0x1.0p-53
-            m.cost[seq] -= pert_scale * (0.25 + u)
+            m.cost[seq] -= pert_seq * (0.25 + u)
         end
     end
     guts_of_solution!(m; do_primals = false, do_duals = true, check_infeas = true, algorithm = -1)
@@ -455,7 +449,58 @@ function dual!(
     elseif !m.has_row_copy
         build_row_copy!(m)
     end
+
+    saved_weights_val = m.drs_saved_val
+    saved_weights_idx = m.drs_saved_idx
+    saved_back = m.drs_saved_back
+    weights_initialized = warm_start && !m.drs_weights_stale &&
+                          m.cf.lu.nrows == nrows && m.cf.lu.ncols == nrows && m.cf.lu.status == 0 &&
+                          length(m.drs_weights) >= nrows && length(m.pivot_var) >= nrows &&
+                          length(saved_weights_val) >= nrows && length(saved_weights_idx) >= nrows &&
+                          length(saved_back) >= ntotal
+    if weights_initialized
+        n_basic_status = 0
+        @inbounds for seq in 1:ntotal
+            saved_back[seq] = Int32(0)
+            if _sb_get_status(m.status[seq]) == CLP_STATUS_BASIC
+                n_basic_status += 1
+            end
+        end
+        if n_basic_status != nrows
+            weights_initialized = false
+        else
+            @inbounds for i in 1:nrows
+                pv = Int(m.pivot_var[i])
+                w = m.drs_weights[i]
+                if pv < 1 || pv > ntotal || !(isfinite(w) && w > 0.0) ||
+                   _sb_get_status(m.status[pv]) != CLP_STATUS_BASIC ||
+                   saved_back[pv] != Int32(0)
+                    weights_initialized = false
+                    break
+                end
+                saved_back[pv] = Int32(i)
+            end
+        end
+    end
+    if weights_initialized
+        @inbounds for i in 1:nrows
+            saved_weights_val[i] = m.drs_weights[i]
+            saved_weights_idx[i] = m.pivot_var[i]
+        end
+    else
+        fill!(saved_weights_val, 0.0)
+        fill!(saved_weights_idx, Int32(0))
+        fill!(saved_back, Int32(0))
+    end
+    can_reuse_cf = warm_start && m.cf.lu.nrows == nrows && m.cf.lu.ncols == nrows &&
+                   m.cf.lu.status == 0 && m.cf.lu.npivots < 35 &&
+                   !clp_fact_time_to_refactorize!(m.cf) &&
+                   m.fact_hash != UInt64(0) && m.basis_hash != UInt64(0) &&
+                   m.fact_hash == _sm_matrix_hash(m) && m.basis_hash == _sm_basis_hash(m)
     create_rim!(m)
+    if can_reuse_cf && _sm_basis_hash(m) != m.basis_hash
+        can_reuse_cf = false
+    end
 
     elems = _sm_active_elements(m)
     dual_bound = 1.0e10
@@ -464,23 +509,6 @@ function dual!(
     drs_alt_val = m.pcs_alt_val
     drs_alt_idx = m.pcs_alt_idx
     drs_alt_nnz = 0
-    saved_weights_val = m.drs_saved_val
-    saved_weights_idx = m.drs_saved_idx
-    saved_back = m.drs_saved_back
-    fill!(saved_weights_val, 0.0)
-    fill!(saved_weights_idx, Int32(0))
-    fill!(saved_back, Int32(0))
-    weights_initialized = warm_start && m.cf.lu.nrows == nrows && m.cf.lu.status == 0 &&
-                          !isempty(m.drs_weights) && @inbounds(m.drs_weights[1] > 0.0)
-    if weights_initialized
-        @inbounds for i in 1:nrows
-            pv = Int(m.pivot_var[i])
-            if pv < 1 || pv > ntotal || !(m.drs_weights[i] > 0.0)
-                weights_initialized = false
-                break
-            end
-        end
-    end
 
     # Local loop scalars for clp_dual_while_iterating!
     first_free = 0
@@ -512,26 +540,44 @@ function dual!(
     prev_outer_iter = -1
     stall_count = 0
     degen_trigger = false
+    zero_piv_streak = 0
 
     while outer_iters < max_outer
         outer_iters += 1
         m.problem_status = -1
         _sm_clear_workspaces!(m)
 
-        # Save Dual Steepest weights before refactorization reorders pivot_var
-        if weights_initialized
-            @inbounds for i in 1:nrows
-                saved_weights_val[i] = m.drs_weights[i]
-                saved_weights_idx[i] = m.pivot_var[i]
+        factorized_this_outer = false
+        if outer_iters == 1 && can_reuse_cf
+            guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
+            if !isfinite(m.largest_primal_err) || !isfinite(m.largest_dual_err) ||
+               m.largest_primal_err > 1.0e-10 || m.largest_dual_err > 1.0e-10
+                fstat = internal_factorize!(m)
+                if fstat != 0
+                    m.problem_status = CLP_STATUS_ERROR
+                    break
+                end
+                factorized_this_outer = true
+                guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
             end
-        end
+        else
+            # Save Dual Steepest weights before refactorization reorders pivot_var
+            # (for outer_iters == 1, the pre-create_rim! snapshot already has the exact pairing)
+            if outer_iters > 1 && weights_initialized
+                @inbounds for i in 1:nrows
+                    saved_weights_val[i] = m.drs_weights[i]
+                    saved_weights_idx[i] = m.pivot_var[i]
+                end
+            end
 
-        fstat = internal_factorize!(m)
-        if fstat != 0
-            m.problem_status = CLP_STATUS_ERROR
-            break
+            fstat = internal_factorize!(m)
+            if fstat != 0
+                m.problem_status = CLP_STATUS_ERROR
+                break
+            end
+            factorized_this_outer = true
+            guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
         end
-        guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
 
         # Ensure dual feasibility (Phase 1 fake bounds if needed)
         if m.num_dual_infeas > 0
@@ -547,12 +593,13 @@ function dual!(
         if !weights_initialized
             _sm_drs_init_weights!(m, exact_weights)
             weights_initialized = true
-        else
+        elseif factorized_this_outer
             clp_drs_restore_weights!(
                 m.drs_weights, saved_weights_val, saved_weights_idx,
                 saved_back, m.pivot_var, nrows, ntotal, 1, nrows,
             )
         end
+        m.drs_weights_stale = false
         _sm_drs_refresh_infeas!(m)
 
         # Check termination after fresh factorization
@@ -656,6 +703,7 @@ function dual!(
         m.problem_status = -1
         ret_code = -1
         drs_alt_nnz = 0
+        iter_before_inner = m.number_iterations
         max_zero_step = (!is_perturbed && !perturbation_done && perturbation < 100) ? 20 : 0
         dl_exit, prob_st, ret_code, n_iters, chg_made, prog_flg, mso,
         first_free, last_bad, ffac, pbad, number_fake, number_changed, n_pinf,
@@ -745,6 +793,9 @@ function dual!(
                 end
             else
                 infeas_confirm = 0
+                if n_unf > 0 || m.cf.lu.npivots > 0
+                    m.problem_status = -1
+                end
             end
         elseif dl_exit == CLP_DL_EXIT_PIVOT_ROW_NEG
             infeas_confirm = 0
@@ -773,6 +824,44 @@ function dual!(
             infeas_confirm = 0
             # CLP_DL_EXIT_DONE: refactorize and continue
         end
+
+        if m.number_iterations == iter_before_inner
+            if factorized_this_outer || m.cf.lu.npivots == 0
+                zero_piv_streak += 1
+                if zero_piv_streak >= 1 && m.problem_status < 0
+                    if zero_piv_streak == 1
+                        m.acceptable_pivot = max(1.0e-12, m.acceptable_pivot * 0.01)
+                        m.cf.lu.pivot_tol = min(0.99, max(m.cf.lu.pivot_tol * 2.0, 0.5))
+                        if is_perturbed
+                            _sm_dual_unperturb!(m, true)
+                            is_perturbed = false
+                            perturbation_done = true
+                            continue
+                        end
+                    elseif zero_piv_streak == 2
+                        m.acceptable_pivot = max(1.0e-12, m.acceptable_pivot * 0.01)
+                        if is_perturbed
+                            _sm_dual_unperturb!(m, true)
+                            is_perturbed = false
+                            perturbation_done = true
+                            continue
+                        end
+                    else
+                        if is_perturbed
+                            _sm_dual_unperturb!(m, true)
+                            is_perturbed = false
+                            perturbation_done = true
+                            continue
+                        elseif number_fake > 0 || m.num_primal_infeas > 0 || m.num_dual_infeas > 0 || m.drs_infeas_nnz > 0
+                            force_primal_cleanup = true
+                            break
+                        end
+                    end
+                end
+            end
+        else
+            zero_piv_streak = 0
+        end
     end
 
     # Guarantee unperturbed costs and exact unperturbed duals before delete_rim!/primal!
@@ -794,12 +883,15 @@ function dual!(
     end
     if number_fake > 0
         _sm_restore_true_bounds!(m)
+        _sm_reset_fake_bounds!(m)
     end
     @inbounds for seq in 1:ntotal
         m.status[seq] &= ~UInt8(24)
     end
     if need_primal_cleanup
         _sm_reset_fake_bounds!(m)
+    elseif number_fake > 0 && m.cf.lu.nrows == nrows && m.cf.lu.status == 0
+        guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
     end
     delete_rim!(m)
     if need_primal_cleanup
@@ -807,6 +899,8 @@ function dual!(
         rem_iters = max(0, max_iterations - prev_iters)
         primal!(m; max_iterations = rem_iters, warm_start = true)
         m.number_iterations += prev_iters
+    elseif m.cf.lu.nrows == nrows && m.cf.lu.ncols == nrows && m.cf.lu.status == 0 && m.fact_hash != UInt64(0)
+        m.basis_hash = _sm_basis_hash(m)
     end
     return m.problem_status
 end
@@ -1005,6 +1099,7 @@ function primal!(
     m.progress_flag = 0
     m.alpha_accuracy = -1.0
     m.acceptable_pivot = 1.0e-9
+    m.drs_weights_stale = true
     m.nlc_infeas_weight = m.infeas_cost
     m.nlc_avg_theta = 1.0
     fill!(m.prog_in, Int32(-1))
@@ -1265,5 +1360,8 @@ function primal!(
         compute_duals!(m)
     end
     delete_rim!(m)
+    if m.cf.lu.nrows == nrows && m.cf.lu.ncols == nrows && m.cf.lu.status == 0 && m.fact_hash != UInt64(0)
+        m.basis_hash = _sm_basis_hash(m)
+    end
     return m.problem_status
 end

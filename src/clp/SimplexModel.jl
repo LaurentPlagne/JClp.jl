@@ -141,6 +141,9 @@ mutable struct ClpSimplexModel
     rng_seed::UInt32
     perturbation::Int
     saved_cost::Vector{Float64}
+    fact_hash::UInt64
+    basis_hash::UInt64
+    drs_weights_stale::Bool
 end
 
 function ClpSimplexModel()
@@ -164,11 +167,60 @@ function ClpSimplexModel()
         1.0e-7, 1.0e-7, 1.0e-13, 1.0e10, 1.0e15, typemax(Int32), 0, 0,
         -1, 0, 0, 0.0, 0.0, 0, 0.0, 0.0, 0, 0.0,
         -1, -1, 0, 0, 0, -1.0, 1.0e-9, UInt32(1234567), 50, Float64[],
+        UInt64(0), UInt64(0), false,
     )
 end
 
 @inline function _sm_active_elements(m::ClpSimplexModel)::Vector{Float64}
     return m.has_scale ? m.scaled_elements : m.mat_elements
+end
+
+@inline function _sm_hash_mix(h::UInt64, x::UInt64)::UInt64
+    h ⊻= x + UInt64(0x9e3779b97f4a7c15) + (h << 6) + (h >>> 2)
+    return h
+end
+
+function _sm_matrix_hash(m::ClpSimplexModel)::UInt64
+    h = UInt64(0x243f6a8885a308d3)
+    h = _sm_hash_mix(h, UInt64(m.nrows))
+    h = _sm_hash_mix(h, UInt64(m.ncols))
+    h = _sm_hash_mix(h, UInt64(m.has_scale))
+    starts = m.mat_starts
+    lengths = m.mat_lengths
+    indices = m.mat_indices
+    elems = _sm_active_elements(m)
+    ncols = m.ncols
+    nnz = length(elems)
+    @inbounds for j in 1:(ncols + 1)
+        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(starts[j])))
+    end
+    @inbounds for j in 1:ncols
+        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(lengths[j])))
+    end
+    @inbounds for k in 1:min(nnz, length(indices))
+        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(indices[k])))
+        v = elems[k]
+        h = _sm_hash_mix(h, v == 0.0 ? UInt64(0) : reinterpret(UInt64, v))
+    end
+    if m.has_scale
+        raw = m.mat_elements
+        @inbounds for k in 1:min(nnz, length(raw))
+            v = raw[k]
+            h = _sm_hash_mix(h, v == 0.0 ? UInt64(0) : reinterpret(UInt64, v))
+        end
+    end
+    return h == UInt64(0) ? UInt64(1) : h
+end
+
+function _sm_basis_hash(m::ClpSimplexModel)::UInt64
+    h = UInt64(0x13198a2e03707344)
+    nrows = m.nrows
+    pv = m.pivot_var
+    length(pv) < nrows && return UInt64(0)
+    @inbounds for i in 1:nrows
+        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(pv[i])))
+    end
+    return h == UInt64(0) ? UInt64(1) : h
 end
 
 """
@@ -319,6 +371,9 @@ function load_problem!(
     m.alpha_accuracy = -1.0
     m.acceptable_pivot = 1.0e-9
     m.saved_cost = zeros(Float64, ntotal)
+    m.fact_hash = UInt64(0)
+    m.basis_hash = UInt64(0)
+    m.drs_weights_stale = false
 
     all_slack_basis!(m)
     return m
@@ -400,6 +455,7 @@ scaling, populating `row_scale`, `col_scale`, `inv_row_scale`, `inv_col_scale`, 
 function scale_model!(m::ClpSimplexModel; mode::Int = m.scaling_flag)::Bool
     nrows = m.nrows
     ncols = m.ncols
+    m.fact_hash = UInt64(0)
     if mode <= 0 || nrows == 0 || ncols == 0
         m.has_scale = false
         m.row_scale = Float64[]
@@ -570,6 +626,8 @@ function all_slack_basis!(m::ClpSimplexModel)::Nothing
         m.pivot_var[i] = Int32(ncols + i)
         m.row_activity[i] = 0.0
     end
+    m.basis_hash = UInt64(0)
+    m.drs_weights_stale = false
     return nothing
 end
 
@@ -605,14 +663,42 @@ function create_rim!(m::ClpSimplexModel)::Nothing
         m.status[seq] &= ~(UInt8(24) | CLP_STATUS_FLAGGED_BIT)
     end
 
-    # Sanitize ALL statuses BEFORE setting m.solution[seq], and rebuild pivot_var
+    # Sanitize ALL statuses BEFORE setting m.solution[seq], preserving pivot_var order
+    # when pivot_var[1:nrows] already holds the exact nrows distinct BASIC variables.
+    preserve_pivot_var = length(m.pivot_var) >= nrows && length(m.drs_saved_back) >= ntotal
+    if preserve_pivot_var
+        n_basic_status = 0
+        @inbounds for seq in 1:ntotal
+            m.drs_saved_back[seq] = Int32(0)
+            if _sb_get_status(m.status[seq]) == CLP_STATUS_BASIC
+                n_basic_status += 1
+            end
+        end
+        if n_basic_status != nrows
+            preserve_pivot_var = false
+        else
+            @inbounds for i in 1:nrows
+                pv = Int(m.pivot_var[i])
+                if pv < 1 || pv > ntotal ||
+                   _sb_get_status(m.status[pv]) != CLP_STATUS_BASIC ||
+                   m.drs_saved_back[pv] != Int32(0)
+                    preserve_pivot_var = false
+                    break
+                end
+                m.drs_saved_back[pv] = Int32(i)
+            end
+        end
+    end
+
     nbasic = 0
     @inbounds for seq in 1:ntotal
         st = _sb_get_status(m.status[seq])
         lo = m.lower[seq]
         hi = m.upper[seq]
         if st == CLP_STATUS_BASIC
-            if nbasic < nrows
+            if preserve_pivot_var
+                nbasic += 1
+            elseif nbasic < nrows
                 nbasic += 1
                 m.pivot_var[nbasic] = Int32(seq)
             else
@@ -826,6 +912,8 @@ function internal_factorize!(m::ClpSimplexModel)::Int
         )
         status = m.cf.lu.status
         if status == 0
+            m.fact_hash = _sm_matrix_hash(m)
+            m.basis_hash = _sm_basis_hash(m)
             return 0
         elseif status == -1
             # Singular basis: demote unpivoted basic variables to bounds and

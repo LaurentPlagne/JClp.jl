@@ -457,5 +457,184 @@ end
             )
             @test JClp.dual!(m_inf2; max_iterations = 500) == JClp.CLP_STATUS_PRIMAL_INFEAS
         end
+
+        # 9. Regression: exact Dual Steepest-Edge weight preservation across create_rim! in warm-start,
+        #    plus fact_hash invalidation on in-place matrix edits & 0-byte warm-start allocation
+        @testset "Warm-start DRS weight preservation, fact_hash guard & 0-alloc" begin
+            rng_w = MersenneTwister(13579)
+            nr_w, nc_w = 12, 24
+            cs_w = Int32[1]
+            ci_w = Int32[]
+            ce_w = Float64[]
+            for j in 1:nc_w
+                rows = sort(randperm(rng_w, nr_w)[1:3])
+                for r in rows
+                    push!(ci_w, Int32(r))
+                    push!(ce_w, round((rand(rng_w) < 0.5 ? -1.0 : 1.0) * (0.5 + rand(rng_w)), digits = 2))
+                end
+                push!(cs_w, Int32(length(ci_w) + 1))
+            end
+            clo_w = zeros(Float64, nc_w)
+            chi_w = fill(8.0, nc_w)
+            obj_w = Float64[round(rand(rng_w) * 4.0 - 1.0, digits = 2) for _ in 1:nc_w]
+            x_tmp = fill(1.5, nc_w)
+            ax_w = zeros(Float64, nr_w)
+            for j in 1:nc_w, k in cs_w[j]:(cs_w[j + 1] - 1)
+                ax_w[ci_w[k]] += ce_w[k] * x_tmp[j]
+            end
+            rlo_w = ax_w .- 1.0
+            rhi_w = ax_w .+ 1.0
+
+            mw = JClp.ClpSimplexModel()
+            JClp.load_problem!(mw, nr_w, nc_w, cs_w, ci_w, ce_w, clo_w, chi_w, obj_w, rlo_w, rhi_w)
+            @test JClp.dual!(mw; scaling = 0, warm_start = false) == JClp.CLP_STATUS_OPTIMAL
+            assert_kkt_optimal(mw; tol = 1e-8)
+
+            # Assign distinct marker weights to each basic variable in current LU order
+            marker_by_var = Dict{Int,Float64}()
+            for i in 1:nr_w
+                pv = Int(mw.pivot_var[i])
+                w_mark = 10.0 + 0.37 * i
+                mw.drs_weights[i] = w_mark
+                marker_by_var[pv] = w_mark
+            end
+
+            # (a) Force refactorization at outer_iters == 1 (npivots = 40 >= 35) while unchanged:
+            #     even if create_rim! / internal_factorize! reorders pivot_var, weights stay mapped to exact variables.
+            mw.cf.lu.npivots = 40
+            @test JClp.dual!(mw; warm_start = true) == JClp.CLP_STATUS_OPTIMAL
+            @test mw.number_iterations == 0
+            for i in 1:nr_w
+                pv = Int(mw.pivot_var[i])
+                @test mw.drs_weights[i] ≈ marker_by_var[pv] atol = 1e-12
+            end
+
+            # (b) Fast-path warm-start reuse (npivots < 35) + bound/obj update -> 0 bytes allocated
+            JClp.set_row_bounds!(mw, 1, rlo_w[1] + 0.1, rhi_w[1] + 0.1)
+            JClp.set_obj_coeff!(mw, 1, obj_w[1] + 0.05)
+            @test JClp.dual!(mw; warm_start = true) == JClp.CLP_STATUS_OPTIMAL
+            assert_kkt_optimal(mw; tol = 1e-8)
+            JClp.set_row_bounds!(mw, 1, rlo_w[1], rhi_w[1])
+            JClp.set_obj_coeff!(mw, 1, obj_w[1])
+            alloc_ws = @allocated JClp.dual!(mw; warm_start = true)
+            @test alloc_ws == 0
+            assert_kkt_optimal(mw; tol = 1e-8)
+
+            # (c) Mutating mat_elements in place invalidates fact_hash and forces fresh refactorization
+            old_val = mw.mat_elements[1]
+            mw.mat_elements[1] = old_val * 1.5
+            @test JClp.dual!(mw; warm_start = true) == JClp.CLP_STATUS_OPTIMAL
+            assert_kkt_optimal(mw; tol = 1e-8)
+
+            # (d) Switching primal! -> dual!(warm_start=true) marks drs_weights_stale and converges cleanly
+            JClp.set_obj_coeff!(mw, 2, obj_w[2] - 0.5)
+            @test JClp.primal!(mw; warm_start = true) == JClp.CLP_STATUS_OPTIMAL
+            @test mw.drs_weights_stale == true
+            JClp.set_row_bounds!(mw, 2, rlo_w[2] - 0.2, rhi_w[2] + 0.2)
+            @test JClp.dual!(mw; warm_start = true) == JClp.CLP_STATUS_OPTIMAL
+            @test mw.drs_weights_stale == false
+            assert_kkt_optimal(mw; tol = 1e-8)
+        end
+
+        # 10. Regression: penalized mixed-cost LP (1e-2 vs 1e4..1e8) with floatmax(Float64) bounds
+        #     converges to exact KKT optimality without NaN/Inf across scaling (0,1,3) x perturbation (50,100)
+        @testset "Penalized mixed-cost LP with floatmax bounds across all modes" begin
+            # 16 balance/capacity rows, 28 physical cols (costs ~6e-3..5e-2) + 16 penalty slacks (costs 1e4..1e8)
+            rng_p = MersenneTwister(20261126)
+            nr_p = 16
+            n_phys = 28
+            n_pen = 16
+            nc_p = n_phys + n_pen
+            col_rows = [Int32[] for _ in 1:nc_p]
+            col_vals = [Float64[] for _ in 1:nc_p]
+            for j in 1:n_phys
+                r1 = ((j - 1) % nr_p) + 1
+                r2 = ((j + 3) % nr_p) + 1
+                r1 == r2 && (r2 = (r1 % nr_p) + 1)
+                push!(col_rows[j], Int32(min(r1, r2))); push!(col_vals[j], -1.0)
+                push!(col_rows[j], Int32(max(r1, r2))); push!(col_vals[j], 0.95)
+                if j % 3 == 0
+                    r3 = ((j + 7) % nr_p) + 1
+                    if r3 != r1 && r3 != r2
+                        push!(col_rows[j], Int32(r3)); push!(col_vals[j], 0.5)
+                    end
+                end
+            end
+            for k in 1:n_pen
+                j = n_phys + k
+                push!(col_rows[j], Int32(k))
+                push!(col_vals[j], k <= 8 ? 1.0 : -1.0)
+            end
+            cs_p = Vector{Int32}(undef, nc_p + 1)
+            ci_p = Int32[]
+            ce_p = Float64[]
+            pos_p = 1
+            for j in 1:nc_p
+                cs_p[j] = Int32(pos_p)
+                perm = sortperm(col_rows[j])
+                for p in perm
+                    push!(ci_p, col_rows[j][p])
+                    push!(ce_p, col_vals[j][p])
+                    pos_p += 1
+                end
+            end
+            cs_p[nc_p + 1] = Int32(pos_p)
+
+            dbl_max = floatmax(Float64)
+            clo_p = vcat(zeros(n_phys), zeros(n_pen))
+            # Mix finite upper bounds and floatmax(Float64) upper bounds (incl. physical & penalty cols)
+            chi_p = Float64[
+                j <= n_phys ? (j % 4 == 0 ? dbl_max : 5.0 + (j % 3) * 5.0) : dbl_max
+                for j in 1:nc_p
+            ]
+            # Tied small physical costs (6e-3..2e-2) + huge penalty costs (1e4..1e8)
+            obj_p = Float64[
+                j <= n_phys ? (j % 2 == 0 ? 0.006288889 : 0.015 * ((j % 3) + 1)) :
+                (j - n_phys <= 8 ? 1.0e4 : 1.0e8)
+                for j in 1:nc_p
+            ]
+            # Some tight demands requiring positive penalty slacks in the optimal solution
+            rlo_p = Float64[i <= 8 ? 2.5 * i : -dbl_max for i in 1:nr_p]
+            rhi_p = Float64[i <= 8 ? 2.5 * i : 4.0 + i for i in 1:nr_p]
+
+            ref_obj = NaN
+            for sc in (0, 1, 3), pert in (50, 100)
+                mp = JClp.ClpSimplexModel()
+                JClp.load_problem!(mp, nr_p, nc_p, cs_p, ci_p, ce_p, clo_p, chi_p, obj_p, rlo_p, rhi_p)
+                st = JClp.dual!(mp; scaling = sc, perturbation = pert, max_iterations = 5000)
+                @test st == JClp.CLP_STATUS_OPTIMAL
+                @test isfinite(mp.objective_value)
+                @test all(isfinite, mp.col_activity)
+                @test all(isfinite, mp.row_activity)
+                @test all(isfinite, mp.dual_row_sol)
+                @test all(isfinite, mp.reduced_cost)
+                assert_kkt_optimal(mp; tol = 1e-6)
+                if isnan(ref_obj)
+                    ref_obj = mp.objective_value
+                else
+                    @test mp.objective_value ≈ ref_obj rtol = 1e-6 atol = 1e-5
+                end
+            end
+
+            # Warm-start transition on the penalized mixed-cost LP allocates 0 bytes
+            mp_ws = JClp.ClpSimplexModel()
+            JClp.load_problem!(mp_ws, nr_p, nc_p, cs_p, ci_p, ce_p, clo_p, chi_p, obj_p, rlo_p, rhi_p)
+            @test JClp.dual!(mp_ws; scaling = 3, perturbation = 50, max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            JClp.set_row_bounds!(mp_ws, 1, 3.0, 3.0)
+            @test JClp.dual!(mp_ws; warm_start = true, max_iterations = 5000) == JClp.CLP_STATUS_OPTIMAL
+            JClp.set_row_bounds!(mp_ws, 1, rlo_p[1], rhi_p[1])
+            alloc_pen = @allocated JClp.dual!(mp_ws; warm_start = true, max_iterations = 5000)
+            @test alloc_pen == 0
+            assert_kkt_optimal(mp_ws; tol = 1e-6)
+
+            # Truncated max_iterations while fake bounds may be active never produces Inf/NaN
+            mp_lim = JClp.ClpSimplexModel()
+            JClp.load_problem!(mp_lim, nr_p, nc_p, cs_p, ci_p, ce_p, clo_p, chi_p, obj_p, rlo_p, rhi_p)
+            st_lim = JClp.dual!(mp_lim; scaling = 3, perturbation = 100, max_iterations = 3)
+            @test st_lim in (JClp.CLP_STATUS_OPTIMAL, JClp.CLP_STATUS_MAX_ITERATIONS)
+            @test isfinite(mp_lim.objective_value)
+            @test all(isfinite, mp_lim.col_activity)
+            @test all(isfinite, mp_lim.row_activity)
+        end
     end
 end
