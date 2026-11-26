@@ -400,21 +400,58 @@ function copy_lu(src::SparseLU)::SparseLU
     )
 end
 
-# --- Zero-allocation LAPACK Accelerate wrappers for dense trailing block ---
+# --- Zero-allocation portable pure-Julia LU (LAPACK dgetrf/dgetrs layout) for dense trailing block ---
+# Stores L (unit diagonal) and U in-place in column-major `a` (n x n) with 1-based pivot indices `ipiv`.
+# 100% portable (macOS/Linux/Windows), zero external library dependency, thread-safe under 48+ threads,
+# and zero heap allocations.
 @inline function lu_lapack_dgetrf!(a::Vector{Float64}, n::Int, ipiv::Vector{Int32})::Int
-    m_ref = Ref{Cint}(Cint(n))
-    n_ref = Ref{Cint}(Cint(n))
-    lda_ref = Ref{Cint}(Cint(n))
-    info_ref = Ref{Cint}(Cint(0))
-    GC.@preserve a ipiv m_ref n_ref lda_ref info_ref begin
-        ccall(
-            (:dgetrf_, "/System/Library/Frameworks/Accelerate.framework/Accelerate"),
-            Cvoid,
-            (Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint}, Ptr{Cint}, Ptr{Cint}),
-            m_ref, n_ref, pointer(a), lda_ref, pointer(ipiv), info_ref,
-        )
+    info = 0
+    @inbounds for j in 1:n
+        col_j = (j - 1) * n
+        # Find pivot row p in j:n maximizing |a[p, j]|
+        p = j
+        max_v = abs(a[col_j + j])
+        for i in (j + 1):n
+            v = abs(a[col_j + i])
+            if v > max_v
+                max_v = v
+                p = i
+            end
+        end
+        ipiv[j] = Int32(p)
+        piv = a[col_j + p]
+        if piv == 0.0
+            if info == 0
+                info = j
+            end
+            continue
+        end
+        # Swap rows j and p across all columns 1:n (matches LAPACK dgetrf row swaps)
+        if p != j
+            for k in 1:n
+                ck = (k - 1) * n
+                tmp = a[ck + j]
+                a[ck + j] = a[ck + p]
+                a[ck + p] = tmp
+            end
+        end
+        # Scale column j below diagonal by 1 / piv
+        inv_piv = 1.0 / piv
+        @simd for i in (j + 1):n
+            a[col_j + i] *= inv_piv
+        end
+        # Rank-1 trailing submatrix update: A[j+1:n, k] -= A[j+1:n, j] * A[j, k]
+        for k in (j + 1):n
+            col_k = (k - 1) * n
+            ajk = a[col_k + j]
+            if ajk != 0.0
+                @simd for i in (j + 1):n
+                    a[col_k + i] = _lu_fmsub(a[col_j + i], ajk, a[col_k + i])
+                end
+            end
+        end
     end
-    return Int(info_ref[])
+    return info
 end
 
 @inline function lu_lapack_dgetrs!(
@@ -425,21 +462,69 @@ end
     rhs::AbstractVector{Float64},
     offset::Int,
 )::Nothing
-    t_ref = Ref{Cchar}(Cchar(trans))
-    n_ref = Ref{Cint}(Cint(n))
-    nrhs_ref = Ref{Cint}(Cint(1))
-    lda_ref = Ref{Cint}(Cint(n))
-    ldb_ref = Ref{Cint}(Cint(n))
-    info_ref = Ref{Cint}(Cint(0))
-    GC.@preserve a ipiv rhs t_ref n_ref nrhs_ref lda_ref ldb_ref info_ref begin
-        ccall(
-            (:dgetrs_, "/System/Library/Frameworks/Accelerate.framework/Accelerate"),
-            Cvoid,
-            (Ptr{Cchar}, Ptr{Cint}, Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint},
-             Ptr{Cint}, Ptr{Cdouble}, Ptr{Cint}, Ptr{Cint}, Csize_t),
-            t_ref, n_ref, nrhs_ref, pointer(a), lda_ref,
-            pointer(ipiv), pointer(rhs, offset), ldb_ref, info_ref, Csize_t(1),
-        )
+    base = offset - 1
+    if trans == UInt8('N') || trans == UInt8('n')
+        # Solve P * L * U * x = b
+        # 1. Apply row interchanges P' * b
+        @inbounds for i in 1:n
+            p = Int(ipiv[i])
+            if p != i
+                tmp = rhs[base + i]
+                rhs[base + i] = rhs[base + p]
+                rhs[base + p] = tmp
+            end
+        end
+        # 2. Forward substitution: L * y = P' * b (L has unit diagonal, column-oriented)
+        @inbounds for j in 1:n
+            xj = rhs[base + j]
+            if xj != 0.0
+                col_j = (j - 1) * n
+                @simd for i in (j + 1):n
+                    rhs[base + i] = _lu_fmsub(a[col_j + i], xj, rhs[base + i])
+                end
+            end
+        end
+        # 3. Back substitution: U * x = y (column-oriented)
+        @inbounds for j in n:-1:1
+            xj = rhs[base + j]
+            if xj != 0.0
+                col_j = (j - 1) * n
+                xj /= a[col_j + j]
+                rhs[base + j] = xj
+                @simd for i in 1:(j - 1)
+                    rhs[base + i] = _lu_fmsub(a[col_j + i], xj, rhs[base + i])
+                end
+            end
+        end
+    else
+        # Solve (P * L * U)' * x = b  =>  U' * L' * P' * x = b
+        # 1. Forward substitution: U' * y = b
+        @inbounds for j in 1:n
+            col_j = (j - 1) * n
+            s = rhs[base + j]
+            @simd for i in 1:(j - 1)
+                s = _lu_fmsub(a[col_j + i], rhs[base + i], s)
+            end
+            rhs[base + j] = s / a[col_j + j]
+        end
+        # 2. Back substitution: L' * z = y (L has unit diagonal)
+        @inbounds for j in n:-1:1
+            col_j = (j - 1) * n
+            s = rhs[base + j]
+            @simd for i in (j + 1):n
+                s = _lu_fmsub(a[col_j + i], rhs[base + i], s)
+            end
+            rhs[base + j] = s
+        end
+        # 3. Reverse row interchanges: x = P * z
+        @inbounds for i in n:-1:1
+            p = Int(ipiv[i])
+            if p != i
+                tmp = rhs[base + i]
+                rhs[base + i] = rhs[base + p]
+                rhs[base + p] = tmp
+            end
+        end
     end
     return nothing
 end

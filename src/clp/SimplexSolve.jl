@@ -201,6 +201,73 @@ function _sm_bounds_feasible(m::ClpSimplexModel)::Bool
     return true
 end
 
+# Zero-allocation in-place heapsort on v[1:n] for Clp C++ iteration-0 distinct-cost heuristic.
+function _sm_heapsort_f64!(v::Vector{Float64}, n::Int)::Nothing
+    n <= 1 && return nothing
+    @inbounds begin
+        for start in (n >>> 1):-1:1
+            root = start
+            while (child = root << 1) <= n
+                if child < n && v[child] < v[child + 1]
+                    child += 1
+                end
+                if v[root] < v[child]
+                    v[root], v[child] = v[child], v[root]
+                    root = child
+                else
+                    break
+                end
+            end
+        end
+        for last in n:-1:2
+            v[1], v[last] = v[last], v[1]
+            root = 1
+            lim = last - 1
+            while (child = root << 1) <= lim
+                if child < lim && v[child] < v[child + 1]
+                    child += 1
+                end
+                if v[root] < v[child]
+                    v[root], v[child] = v[child], v[root]
+                    root = child
+                else
+                    break
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+# Matches ClpSimplexDual::perturb() iteration-0 heuristic:
+# perturb immediately if <= 25% of columns have distinct |objective[j]| values
+# (typical of hydro/network/SDP LPs with many zero or repeated costs).
+# Uses pre-allocated m.c0_val buffer -> 0 bytes allocated.
+function _sm_should_perturb_init!(m::ClpSimplexModel)::Bool
+    ncols = m.ncols
+    ncols <= 0 && return false
+    buf = m.c0_val
+    @inbounds for j in 1:ncols
+        buf[j] = abs(m.objective[j])
+    end
+    _sm_heapsort_f64!(buf, ncols)
+    n_distinct = 1
+    @inbounds begin
+        last_v = buf[1]
+        for j in 2:ncols
+            v = buf[j]
+            if v != last_v
+                n_distinct += 1
+                last_v = v
+            end
+        end
+        for j in 1:ncols
+            buf[j] = 0.0
+        end
+    end
+    return n_distinct * 4 <= ncols
+end
+
 function _sm_dual_perturb!(m::ClpSimplexModel, pert_mode::Int)::Nothing
     nrows = m.nrows
     ncols = m.ncols
@@ -403,7 +470,17 @@ function dual!(
     fill!(saved_weights_val, 0.0)
     fill!(saved_weights_idx, Int32(0))
     fill!(saved_back, Int32(0))
-    weights_initialized = false
+    weights_initialized = warm_start && m.cf.lu.nrows == nrows && m.cf.lu.status == 0 &&
+                          !isempty(m.drs_weights) && @inbounds(m.drs_weights[1] > 0.0)
+    if weights_initialized
+        @inbounds for i in 1:nrows
+            pv = Int(m.pivot_var[i])
+            if pv < 1 || pv > ntotal || !(m.drs_weights[i] > 0.0)
+                weights_initialized = false
+                break
+            end
+        end
+    end
 
     # Local loop scalars for clp_dual_while_iterating!
     first_free = 0
@@ -538,7 +615,7 @@ function dual!(
         # Activate dual perturbation if configured and triggered
         if !is_perturbed && !perturbation_done && perturbation != 100
             if perturbation == 102
-                if m.num_dual_infeas == 0 && m.num_primal_infeas > 0
+                if m.num_primal_infeas > 0
                     _sm_dual_perturb!(m, perturbation)
                     is_perturbed = true
                 end
@@ -547,6 +624,10 @@ function dual!(
                     prev_iter = m.number_iterations
                     prev_obj = m.objective_value
                     prev_outer_iter = m.number_iterations
+                    if m.num_primal_infeas > 0 && _sm_should_perturb_init!(m)
+                        _sm_dual_perturb!(m, perturbation)
+                        is_perturbed = true
+                    end
                 else
                     obj_tol = 1.0e-9 * max(1.0, abs(m.objective_value))
                     if abs(m.objective_value - prev_obj) > obj_tol

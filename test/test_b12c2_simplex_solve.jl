@@ -390,5 +390,72 @@ end
             @test _measure_e226_ws_alloc(50) == 0
             @test _measure_e226_ws_alloc(102) == 0
         end
+
+        # 6. Regression: portable pure-Julia LU (lu_lapack_dgetrf!/dgetrs!) + 0-alloc
+        @testset "Portable pure-Julia dense LU (N/T + singular + 0-alloc)" begin
+            A0 = Float64[0.5 3.0 1.0; 4.0 1.0 2.0; 2.0 5.0 0.2]
+            a = copy(vec(A0))
+            ipiv = zeros(Int32, 3)
+            @test JClp.lu_lapack_dgetrf!(a, 3, ipiv) == 0
+            b = Float64[1.0, 2.0, 3.0]
+            xN = copy(b)
+            JClp.lu_lapack_dgetrs!(UInt8('N'), a, 3, ipiv, xN, 1)
+            @test maximum(abs.(A0 * xN - b)) < 1e-14
+            xT = copy(b)
+            JClp.lu_lapack_dgetrs!(UInt8('T'), a, 3, ipiv, xT, 1)
+            @test maximum(abs.(A0' * xT - b)) < 1e-14
+            # 0-byte allocation on both dgetrf! and dgetrs!
+            a_work = copy(vec(A0))
+            rhs_work = copy(b)
+            JClp.lu_lapack_dgetrf!(a_work, 3, ipiv)
+            JClp.lu_lapack_dgetrs!(UInt8('N'), a_work, 3, ipiv, rhs_work, 1)
+            copyto!(a_work, vec(A0))
+            @test (@allocated JClp.lu_lapack_dgetrf!(a_work, 3, ipiv)) == 0
+            @test (@allocated JClp.lu_lapack_dgetrs!(UInt8('N'), a_work, 3, ipiv, rhs_work, 1)) == 0
+            @test (@allocated JClp.lu_lapack_dgetrs!(UInt8('T'), a_work, 3, ipiv, rhs_work, 1)) == 0
+            # Singular matrix returns info > 0
+            a_sing = Float64[1.0, 2.0, 2.0, 4.0]
+            ipiv2 = zeros(Int32, 2)
+            @test JClp.lu_lapack_dgetrf!(a_sing, 2, ipiv2) == 2
+        end
+
+        # 7. Regression: iteration-0 distinct-cost heuristic (_sm_should_perturb_init!)
+        @testset "Iteration-0 distinct-cost heuristic" begin
+            m_rep = JClp.ClpSimplexModel()
+            JClp.load_problem!(
+                m_rep, 1, 8, Int32[1,2,3,4,5,6,7,8,9], Int32[1,1,1,1,1,1,1,1], ones(8),
+                zeros(8), ones(8), Float64[0, 0, 0, 0, 0, 0, 1, 1], [0.5], [1.0],
+            )
+            @test JClp._sm_should_perturb_init!(m_rep) == true
+            @test (@allocated JClp._sm_should_perturb_init!(m_rep)) == 0
+            @test all(==(0.0), m_rep.c0_val)
+
+            m_dist = JClp.ClpSimplexModel()
+            JClp.load_problem!(
+                m_dist, 1, 4, Int32[1,2,3,4,5], Int32[1,1,1,1], ones(4),
+                zeros(4), ones(4), Float64[1, 2, 3, 4], [0.5], [1.0],
+            )
+            @test JClp._sm_should_perturb_init!(m_dist) == false
+        end
+
+        # 8. Regression: primal! / dual! on primal-infeasible LP with a free variable
+        #    (clp_pcs_redo_infeasibilities! must skip flagged variables so primal! does not stall)
+        @testset "Primal-infeasible LP with free variable does not stall" begin
+            # x1 + x2 = 10, 0 <= x1, x2 <= 1 (infeasible), plus free variable x3 with cost -1
+            m_inf = JClp.ClpSimplexModel()
+            JClp.load_problem!(
+                m_inf, 1, 3, Int32[1, 2, 3, 3], Int32[1, 1], Float64[1.0, 1.0],
+                Float64[0.0, 0.0, -floatmax(Float64)], Float64[1.0, 1.0, floatmax(Float64)],
+                Float64[0.0, 0.0, -1.0], Float64[10.0], Float64[10.0],
+            )
+            @test JClp.primal!(m_inf; max_iterations = 500) == JClp.CLP_STATUS_PRIMAL_INFEAS
+            m_inf2 = JClp.ClpSimplexModel()
+            JClp.load_problem!(
+                m_inf2, 1, 3, Int32[1, 2, 3, 3], Int32[1, 1], Float64[1.0, 1.0],
+                Float64[0.0, 0.0, -floatmax(Float64)], Float64[1.0, 1.0, floatmax(Float64)],
+                Float64[0.0, 0.0, -1.0], Float64[10.0], Float64[10.0],
+            )
+            @test JClp.dual!(m_inf2; max_iterations = 500) == JClp.CLP_STATUS_PRIMAL_INFEAS
+        end
     end
 end

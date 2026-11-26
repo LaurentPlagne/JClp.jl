@@ -577,9 +577,11 @@ function clp_pcs_redo_infeasibilities!(
     neg_tol = -tol
     nnz = 0
     @inbounds for iseq in 1:ntotal
-        st = status[iseq] & CLP_STATUS_MASK
-        val = rc[iseq]
+        raw_st = status[iseq]
         infeas[iseq] = 0.0
+        (raw_st & CLP_STATUS_FLAGGED_BIT) != UInt8(0) && continue
+        st = raw_st & CLP_STATUS_MASK
+        val = rc[iseq]
         if st == CLP_STATUS_AT_LOWER
             # keep val
         elseif (st & UInt8(1)) != UInt8(0)

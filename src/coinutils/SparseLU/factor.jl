@@ -1675,7 +1675,7 @@ function _factor_dense!(lu::SparseLU)::Int
     end
     which = 0
     @inbounds for i in 1:nr
-        if last_row[i] == Int32(0)
+        if last_row[i] == Int32(0) && which < nd
             which += 1
             last_row[i] = which % Int32
             next_row[i] = (lu.ngood_u + which) % Int32
@@ -1690,21 +1690,27 @@ function _factor_dense!(lu::SparseLU)::Int
         num = Int(nic[ic])
         if num != 0
             s = Int(start_col_u[ic])
-            for k in s:(s + num - 1)
-                ir = Int(last_row[Int(idx_row[k])])
-                dense_area[col_off + ir] = el_u[k]
+            if col_off + nd <= full
+                for k in s:(s + num - 1)
+                    ir = Int(last_row[Int(idx_row[k])])
+                    if 1 <= ir <= nd
+                        dense_area[col_off + ir] = el_u[k]
+                    end
+                end
             end
             col_off += nd
-            while last_row[rows_done] < Int32(0)
+            while rows_done <= nr && last_row[rows_done] < Int32(0)
                 rows_done += 1
             end
-            lu.ngood_u += 1
-            next_row[rows_done] = lu.ngood_u % Int32
-            rows_done += 1
-            start_col_l[lu.ngood_u + 1] = end_l
-            nic[ic] = Int32(0)
-            piv_col[lu.ngood_u] = ic % Int32
-            piv_reg[lu.ngood_u] = 1.0
+            if rows_done <= nr
+                lu.ngood_u += 1
+                next_row[rows_done] = lu.ngood_u % Int32
+                rows_done += 1
+                start_col_l[lu.ngood_u + 1] = end_l
+                nic[ic] = Int32(0)
+                piv_col[lu.ngood_u] = ic % Int32
+                piv_reg[lu.ngood_u] = 1.0
+            end
         end
     end
 
