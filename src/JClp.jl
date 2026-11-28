@@ -17,6 +17,7 @@ include("clp/MpsReader.jl")
 include("clp/SimplexModel.jl")
 include("clp/SimplexSolve.jl")
 include("clp/Presolve.jl")
+include("clp/Reoptimization.jl")
 
 """
     Optimizer(; kwargs...)

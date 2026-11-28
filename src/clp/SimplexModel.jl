@@ -181,34 +181,66 @@ end
 end
 
 function _sm_matrix_hash(m::ClpSimplexModel)::UInt64
-    h = UInt64(0x243f6a8885a308d3)
-    h = _sm_hash_mix(h, UInt64(m.nrows))
-    h = _sm_hash_mix(h, UInt64(m.ncols))
-    h = _sm_hash_mix(h, UInt64(m.has_scale))
+    h0 = UInt64(0x243f6a8885a308d3) ⊻ (UInt64(m.nrows) * UInt64(0x9e3779b97f4a7c15))
+    h1 = UInt64(0x13198a2e03707344) ⊻ (UInt64(m.ncols) * UInt64(0xbf58476d1ce4e5b9))
+    h2 = UInt64(0xa4093822299f31d0) ⊻ (UInt64(m.has_scale) * UInt64(0x94d049bb133111eb))
+    h3 = UInt64(0x082efa98ec4e6c89)
     starts = m.mat_starts
     lengths = m.mat_lengths
     indices = m.mat_indices
     elems = _sm_active_elements(m)
     ncols = m.ncols
-    nnz = length(elems)
-    @inbounds for j in 1:(ncols + 1)
-        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(starts[j])))
-    end
-    @inbounds for j in 1:ncols
-        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(lengths[j])))
-    end
-    @inbounds for k in 1:min(nnz, length(indices))
-        h = _sm_hash_mix(h, reinterpret(UInt64, Int64(indices[k])))
-        v = elems[k]
-        h = _sm_hash_mix(h, v == 0.0 ? UInt64(0) : reinterpret(UInt64, v))
-    end
-    if m.has_scale
-        raw = m.mat_elements
-        @inbounds for k in 1:min(nnz, length(raw))
-            v = raw[k]
-            h = _sm_hash_mix(h, v == 0.0 ? UInt64(0) : reinterpret(UInt64, v))
+    n_idx = min(length(elems), length(indices))
+    @inbounds begin
+        for j in 1:ncols
+            s = reinterpret(UInt64, Int64(starts[j]))
+            l = reinterpret(UInt64, Int64(lengths[j]))
+            h0 = h0 * UInt64(0x9e3779b97f4a7c15) ⊻ (s ⊻ (l << 32))
+        end
+        if ncols + 1 <= length(starts)
+            h0 = h0 * UInt64(0x9e3779b97f4a7c15) ⊻ reinterpret(UInt64, Int64(starts[ncols + 1]))
+        end
+        k = 1
+        while k + 3 <= n_idx
+            v0 = elems[k];     x0 = (v0 == 0.0 ? UInt64(0) : reinterpret(UInt64, v0)) ⊻ reinterpret(UInt64, Int64(indices[k]))
+            v1 = elems[k + 1]; x1 = (v1 == 0.0 ? UInt64(0) : reinterpret(UInt64, v1)) ⊻ reinterpret(UInt64, Int64(indices[k + 1]))
+            v2 = elems[k + 2]; x2 = (v2 == 0.0 ? UInt64(0) : reinterpret(UInt64, v2)) ⊻ reinterpret(UInt64, Int64(indices[k + 2]))
+            v3 = elems[k + 3]; x3 = (v3 == 0.0 ? UInt64(0) : reinterpret(UInt64, v3)) ⊻ reinterpret(UInt64, Int64(indices[k + 3]))
+            h0 = h0 * UInt64(0x9e3779b97f4a7c15) ⊻ x0
+            h1 = h1 * UInt64(0xbf58476d1ce4e5b9) ⊻ x1
+            h2 = h2 * UInt64(0x94d049bb133111eb) ⊻ x2
+            h3 = h3 * UInt64(0x517cc1b727220a95) ⊻ x3
+            k += 4
+        end
+        while k <= n_idx
+            v = elems[k]
+            x = (v == 0.0 ? UInt64(0) : reinterpret(UInt64, v)) ⊻ reinterpret(UInt64, Int64(indices[k]))
+            h0 = h0 * UInt64(0x9e3779b97f4a7c15) ⊻ x
+            k += 1
+        end
+        if m.has_scale
+            raw = m.mat_elements
+            n_raw = min(length(elems), length(raw))
+            k = 1
+            while k + 3 <= n_raw
+                r0 = raw[k];     y0 = r0 == 0.0 ? UInt64(0) : reinterpret(UInt64, r0)
+                r1 = raw[k + 1]; y1 = r1 == 0.0 ? UInt64(0) : reinterpret(UInt64, r1)
+                r2 = raw[k + 2]; y2 = r2 == 0.0 ? UInt64(0) : reinterpret(UInt64, r2)
+                r3 = raw[k + 3]; y3 = r3 == 0.0 ? UInt64(0) : reinterpret(UInt64, r3)
+                h0 = h0 * UInt64(0x9e3779b97f4a7c15) ⊻ y0
+                h1 = h1 * UInt64(0xbf58476d1ce4e5b9) ⊻ y1
+                h2 = h2 * UInt64(0x94d049bb133111eb) ⊻ y2
+                h3 = h3 * UInt64(0x517cc1b727220a95) ⊻ y3
+                k += 4
+            end
+            while k <= n_raw
+                r = raw[k]
+                h0 = h0 * UInt64(0x9e3779b97f4a7c15) ⊻ (r == 0.0 ? UInt64(0) : reinterpret(UInt64, r))
+                k += 1
+            end
         end
     end
+    h = _sm_hash_mix(_sm_hash_mix(_sm_hash_mix(h0, h1), h2), h3)
     return h == UInt64(0) ? UInt64(1) : h
 end
 

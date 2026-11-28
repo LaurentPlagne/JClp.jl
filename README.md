@@ -48,6 +48,34 @@ status = JClp.dual!(m; max_iterations = 200_000)
 status = JClp.primal!(m; max_iterations = 200_000)
 ```
 
+## Repeated solves
+
+For a sequence of changes to bounds or objective coefficients on the same model,
+`reoptimize!` accepts the caller's existing warm-start flag. Its three
+experimental options can be enabled independently. With their defaults it calls
+`dual!` with the supplied flag.
+
+```julia
+cache = JClp.BasisCache()   # create once per persistent model
+options = (; cold_presolve=true, defer_warm_perturbation=true, basis_cache=cache)
+
+status = JClp.reoptimize!(m; warm_start=false, options...)
+# Apply the next point's bounds, RHS and objective coefficients to m.
+status = JClp.reoptimize!(m; warm_start=(status == JClp.CLP_STATUS_OPTIMAL), options...)
+```
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `cold_presolve` | `false` | Uses `initial_solve!` for cold starts, including restarts after a failed solve. |
+| `defer_warm_perturbation` | `false` | Starts a warm dual solve on the original costs in automatic mode. The existing stall and degeneracy triggers can still perturb later. |
+| `basis_cache` | `nothing` | Remembers four optimal bases. For bound changes it scores their saved primal activities against the new bounds and refactorizes if it selects an older basis. |
+
+For an A/B run, replay the same updates and scenario resets with all options at
+their defaults, then enable one at a time. Record total solve time, the iterations
+reported by each call, status and objective. Include infeasible points and cold
+restarts in the totals. When downstream calculations use dual prices, compare
+their outputs as well.
+
 ## Representative Benchmarks (vs C++ Clp)
 
 Measured on Apple Silicon (Julia 1.13.2, `initial_solve!` with presolve enabled, warmed up, `0.0 ms` GC):

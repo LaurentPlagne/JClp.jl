@@ -352,9 +352,12 @@ end
 
 """
     dual!(m::ClpSimplexModel; max_iterations=m.max_iterations, warm_start=false,
-          scaling=m.scaling_flag, exact_weights=false, perturbation=m.perturbation) -> Int
+          scaling=m.scaling_flag, exact_weights=false, perturbation=m.perturbation,
+          defer_warm_perturbation=false) -> Int
 
 Solve `m` using the standalone pure-Julia Dual Simplex method (`clp_dual_while_iterating!`).
+On a warm start, `defer_warm_perturbation=true` postpones automatic perturbation
+until the solver detects stagnation. Explicit eager mode (102) still applies immediately.
 Returns `m.problem_status`: `0` (optimal), `1` (primal infeasible), `2` (dual infeasible /
 unbounded), `3` (max iterations), `4` (error).
 """
@@ -365,6 +368,7 @@ function dual!(
     scaling::Int = m.scaling_flag,
     exact_weights::Bool = false,
     perturbation::Int = m.perturbation,
+    defer_warm_perturbation::Bool = false,
 )::Int
     nrows = m.nrows
     ncols = m.ncols
@@ -541,6 +545,7 @@ function dual!(
     stall_count = 0
     degen_trigger = false
     zero_piv_streak = 0
+    skip_factorize_next = false
 
     while outer_iters < max_outer
         outer_iters += 1
@@ -548,10 +553,17 @@ function dual!(
         _sm_clear_workspaces!(m)
 
         factorized_this_outer = false
-        if outer_iters == 1 && can_reuse_cf
+        if (outer_iters == 1 && can_reuse_cf) || skip_factorize_next
+            skip_factorize_next = false
             guts_of_solution!(m; do_primals = true, do_duals = true, check_infeas = true, algorithm = -1)
             if !isfinite(m.largest_primal_err) || !isfinite(m.largest_dual_err) ||
                m.largest_primal_err > 1.0e-10 || m.largest_dual_err > 1.0e-10
+                if outer_iters > 1 && weights_initialized
+                    @inbounds for i in 1:nrows
+                        saved_weights_val[i] = m.drs_weights[i]
+                        saved_weights_idx[i] = m.pivot_var[i]
+                    end
+                end
                 fstat = internal_factorize!(m)
                 if fstat != 0
                     m.problem_status = CLP_STATUS_ERROR
@@ -672,7 +684,8 @@ function dual!(
                     prev_iter = m.number_iterations
                     prev_obj = m.objective_value
                     prev_outer_iter = m.number_iterations
-                    if m.num_primal_infeas > 0 && _sm_should_perturb_init!(m)
+                    if !(warm_start && defer_warm_perturbation) &&
+                       m.num_primal_infeas > 0 && _sm_should_perturb_init!(m)
                         _sm_dual_perturb!(m, perturbation)
                         is_perturbed = true
                     end
@@ -815,7 +828,14 @@ function dual!(
                 end
                 break
             end
-            # Loop back to refactorize and verify optimality / restore fake bounds
+            # Verify optimality directly on current LU if few clean pivots accumulated;
+            # otherwise fall back to full refactorization on next outer iteration.
+            if m.number_iterations > iter_before_inner &&
+               m.cf.lu.nrows == nrows && m.cf.lu.ncols == nrows && m.cf.lu.status == 0 &&
+               m.cf.lu.npivots > 0 && m.cf.lu.npivots < 35 &&
+               !clp_fact_time_to_refactorize!(m.cf)
+                skip_factorize_next = true
+            end
         elseif dl_exit == CLP_DL_EXIT_FALLBACK_ITER
             infeas_confirm = 0
             first_free = 0
